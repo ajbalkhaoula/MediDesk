@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { CalendarDays, ChevronLeft, ChevronRight, List, Pencil, Plus, UserX, XCircle } from "lucide-react";
+import { ArrowDownAZ, ArrowUpAZ, CalendarDays, ChevronLeft, ChevronRight, List, Pencil, Plus, Search, UserX, XCircle } from "lucide-react";
 import NewAppointmentDialog, { type AppointmentFormInput } from "@/components/dialogs/NewAppointmentDialog";
 import { apiRequest } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
@@ -102,6 +102,9 @@ const Calendar = () => {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [reasonOptions, setReasonOptions] = useState<AppointmentReasonSetting[]>(() => getAppointmentReasonSettings());
+  const [listSearch, setListSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"date" | "patient">("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const loadRequestIdRef = useRef(0);
 
   const days = useMemo(
@@ -266,10 +269,42 @@ const Calendar = () => {
         }
       : undefined;
 
-  const sortedAppointments = useMemo(
-    () => [...appointments].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()),
-    [appointments],
-  );
+  const listAppointments = useMemo(() => {
+    const term = listSearch.trim().toLowerCase();
+    const filtered = term
+      ? appointments.filter((appt) => {
+          const dateText = new Intl.DateTimeFormat("fr-FR", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+            .format(new Date(appt.startsAt))
+            .toLowerCase();
+          return [appt.patientName, appt.tag ?? "", getStatusLabel(appt.status), dateText]
+            .join(" ")
+            .toLowerCase()
+            .includes(term);
+        })
+      : appointments;
+
+    const sorted = [...filtered].sort((a, b) => {
+      if (sortBy === "date") return new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
+      if (sortBy === "patient") return a.patientName.localeCompare(b.patientName, "fr");
+      return new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
+    });
+    return sortDir === "asc" ? sorted : sorted.reverse();
+  }, [appointments, listSearch, sortBy, sortDir]);
+
+  const toggleSort = (key: "date" | "patient") => {
+    if (sortBy === key) {
+      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortBy(key);
+    setSortDir("asc");
+  };
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="space-y-4">
@@ -282,7 +317,7 @@ const Calendar = () => {
 
         <div className="flex items-center gap-2">
           <div className="inline-flex rounded-lg border border-input bg-card p-0.5">
-            <button type="button" onClick={() => setViewMode("calendar")} className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium ${viewMode === "calendar" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}><CalendarDays className="h-3.5 w-3.5" />Calendar</button>
+            <button type="button" onClick={() => setViewMode("calendar")} className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium ${viewMode === "calendar" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}><CalendarDays className="h-3.5 w-3.5" />Calendrier</button>
             <button type="button" onClick={() => setViewMode("list")} className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium ${viewMode === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}><List className="h-3.5 w-3.5" />Liste</button>
           </div>
           <button onClick={() => openCreateDialog()} className="flex h-9 items-center gap-2 rounded-lg gradient-primary px-4 text-sm font-medium text-primary-foreground"><Plus className="h-4 w-4" />Nouveau RDV</button>
@@ -337,41 +372,59 @@ const Calendar = () => {
 
       {viewMode === "list" && (
         <div className="rounded-xl border border-border bg-card overflow-hidden" style={{ boxShadow: "var(--shadow-card)" }}>
+          <div className="relative border-b border-border px-4 py-3">
+            <Search className="pointer-events-none absolute left-7 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={listSearch}
+              onChange={(e) => setListSearch(e.target.value)}
+              placeholder="Rechercher dans les rendez-vous..."
+              className="h-10 w-full rounded-lg border border-input bg-background pl-10 pr-3 text-sm"
+            />
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px]">
               <thead>
                 <tr className="border-b border-border bg-muted/40">
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Date</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Heure</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Patient</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <button type="button" onClick={() => toggleSort("date")} className="inline-flex items-center gap-1 hover:text-foreground">
+                      Date/Heure {sortBy === "date" && (sortDir === "asc" ? <ArrowUpAZ className="h-3.5 w-3.5" /> : <ArrowDownAZ className="h-3.5 w-3.5" />)}
+                    </button>
+                  </th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <button type="button" onClick={() => toggleSort("patient")} className="inline-flex items-center gap-1 hover:text-foreground">
+                      Patient {sortBy === "patient" && (sortDir === "asc" ? <ArrowUpAZ className="h-3.5 w-3.5" /> : <ArrowDownAZ className="h-3.5 w-3.5" />)}
+                    </button>
+                  </th>
                   <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Motif</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Statut</th>
                   <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {sortedAppointments.map((appt) => {
+                {listAppointments.map((appt) => {
                   const start = new Date(appt.startsAt);
                   const end = new Date(appt.endsAt);
                   return (
                     <tr key={appt.id} className="border-b border-border/50 hover:bg-muted/30">
-                      <td className="px-5 py-3 text-sm text-foreground">{new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(start)}</td>
-                      <td className="px-5 py-3 text-sm text-foreground">{toTimeInput(start)} - {toTimeInput(end)}</td>
+                      <td className="px-5 py-3 text-sm text-foreground">
+                        {new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(start)}
+                        <span className="ml-2 text-muted-foreground">{toTimeInput(start)} - {toTimeInput(end)}</span>
+                      </td>
                       <td className="px-5 py-3 text-sm text-foreground">{appt.patientName}</td>
                       <td className="px-5 py-3 text-sm text-foreground">{appt.tag || "-"}</td>
                       <td className="px-5 py-3"><span className={`rounded-full border px-2 py-0.5 text-xs ${getStatusBadgeClass(appt.status)}`}>{getStatusLabel(appt.status)}</span></td>
                       <td className="px-5 py-3 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-2">
-                          <button type="button" onClick={() => void handleQuickStatusChange(appt, "canceled")} className="rounded-md p-1 text-destructive hover:bg-destructive/10" title="Cancel RDV"><XCircle className="h-4 w-4" /></button>
-                          <button type="button" onClick={() => void handleQuickStatusChange(appt, "no_show")} className="rounded-md p-1 text-warning hover:bg-warning/10" title="Mark No-show"><UserX className="h-4 w-4" /></button>
+                          <button type="button" onClick={() => void handleQuickStatusChange(appt, "canceled")} className="rounded-md p-1 text-destructive hover:bg-destructive/10" title="Annuler RDV"><XCircle className="h-4 w-4" /></button>
+                          <button type="button" onClick={() => void handleQuickStatusChange(appt, "no_show")} className="rounded-md p-1 text-warning hover:bg-warning/10" title="Marquer absent"><UserX className="h-4 w-4" /></button>
                           <button type="button" onClick={() => openEditDialog(appt)} className="rounded-md p-1 text-muted-foreground hover:bg-muted" title="Modifier"><Pencil className="h-4 w-4" /></button>
                         </div>
                       </td>
                     </tr>
                   );
                 })}
-                {!loading && !sortedAppointments.length && (
-                  <tr><td colSpan={6} className="px-5 py-6 text-sm text-muted-foreground">Aucun rendez-vous cette semaine.</td></tr>
+                {!loading && !listAppointments.length && (
+                  <tr><td colSpan={5} className="px-5 py-6 text-sm text-muted-foreground">Aucun rendez-vous cette semaine.</td></tr>
                 )}
               </tbody>
             </table>
@@ -404,3 +457,4 @@ const Calendar = () => {
 };
 
 export default Calendar;
+

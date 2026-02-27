@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Plus, Trash2 } from "lucide-react";
-import { apiRequest } from "@/lib/api";
+import { Plus, Search, Trash2 } from "lucide-react";
+import { apiRequest, API_BASE_URL } from "@/lib/api";
+import { getAuthToken } from "@/lib/auth";
 import { toast } from "@/hooks/use-toast";
 import { getPrestationSettings, type PrestationSetting } from "@/lib/scheduling";
 
 interface Consultation {
   id: string;
   patientId: string;
-  appointmentId: string;
+  appointmentId: string | null;
   motifLabel: string | null;
   startTime: string;
   endTime: string;
@@ -35,6 +36,13 @@ interface PatientsResponse {
   patients: Array<{ id: string; firstName: string; lastName: string }>;
 }
 
+function statusLabel(status: Consultation["status"]): string {
+  if (status === "draft") return "Brouillon";
+  if (status === "completed") return "Effectué";
+  if (status === "cancelled") return "Annulé";
+  return "Absent";
+}
+
 const ConsultationPage = () => {
   const { consultationId = "" } = useParams();
   const navigate = useNavigate();
@@ -47,9 +55,20 @@ const ConsultationPage = () => {
   const [selectedPrestationId, setSelectedPrestationId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [saving, setSaving] = useState(false);
+  const [actSearch, setActSearch] = useState("");
 
   const isDraft = consultation?.status === "draft";
-  const isCompleted = consultation?.status === "completed";
+
+  const filteredActs = useMemo(() => {
+    const term = actSearch.trim().toLowerCase();
+    if (!term) return acts;
+    return acts.filter((act) =>
+      [act.label, String(act.quantity), act.unitPrice.toFixed(2), act.total.toFixed(2)]
+        .join(" ")
+        .toLowerCase()
+        .includes(term),
+    );
+  }, [acts, actSearch]);
 
   const total = useMemo(() => acts.reduce((sum, act) => sum + act.total, 0), [acts]);
 
@@ -153,16 +172,34 @@ const ConsultationPage = () => {
         auth: true,
       });
       toast({ title: "Consultation complétée" });
-      navigate("/calendar");
+      navigate("/consultations");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Finalisation impossible";
       toast({ title: "Erreur", description: message, variant: "destructive" });
     }
   };
 
-  const startInvoicing = () => {
+  const downloadReport = async (kind: "pdf" | "word") => {
     if (!consultation) return;
-    navigate(`/invoices/new?consultationId=${consultation.id}&patientId=${consultation.patientId}`);
+    try {
+      const token = getAuthToken();
+      const response = await fetch(`${API_BASE_URL}/api/consultations/${consultation.id}/${kind}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = kind === "pdf" ? `CR-consultation-${consultation.id}.pdf` : `CR-consultation-${consultation.id}.doc`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Téléchargement impossible";
+      toast({ title: "Erreur", description: message, variant: "destructive" });
+    }
   };
 
   return (
@@ -183,9 +220,7 @@ const ConsultationPage = () => {
                 </p>
                 <p className="text-xs text-muted-foreground">{consultation.motifLabel ?? "-"}</p>
               </div>
-              <span className="rounded-full border px-3 py-1 text-xs font-medium">
-                {consultation.status}
-              </span>
+              <span className="rounded-full border px-3 py-1 text-xs font-medium">{statusLabel(consultation.status)}</span>
             </div>
           </div>
 
@@ -199,12 +234,7 @@ const ConsultationPage = () => {
               className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
             />
             {isDraft && (
-              <button
-                type="button"
-                onClick={() => void saveNotes()}
-                disabled={saving}
-                className="h-10 rounded-lg border border-input px-4 text-sm font-medium text-foreground hover:bg-muted"
-              >
+              <button type="button" onClick={() => void saveNotes()} disabled={saving} className="h-10 rounded-lg border border-input px-4 text-sm font-medium text-foreground hover:bg-muted">
                 Enregistrer les notes
               </button>
             )}
@@ -225,11 +255,15 @@ const ConsultationPage = () => {
                 </select>
                 <input type="number" min={1} value={quantity} onChange={(e) => setQuantity(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
                 <button type="button" onClick={() => void addAct()} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg gradient-primary px-4 text-sm font-medium text-primary-foreground">
-                  <Plus className="h-4 w-4" />
-                  Ajouter
+                  <Plus className="h-4 w-4" /> Ajouter
                 </button>
               </div>
             )}
+
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input value={actSearch} onChange={(e) => setActSearch(e.target.value)} placeholder="Rechercher un acte..." className="h-10 w-full rounded-lg border border-input bg-background pl-10 pr-3 text-sm" />
+            </div>
 
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full min-w-[700px]">
@@ -243,7 +277,7 @@ const ConsultationPage = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {acts.map((act) => (
+                  {filteredActs.map((act) => (
                     <tr key={act.id} className="border-b border-border/50">
                       <td className="px-4 py-3 text-sm text-foreground">{act.label}</td>
                       <td className="px-4 py-3 text-sm text-foreground">{act.quantity}</td>
@@ -258,25 +292,16 @@ const ConsultationPage = () => {
                       </td>
                     </tr>
                   ))}
-                  {!acts.length && (
-                    <tr><td colSpan={5} className="px-4 py-4 text-sm text-muted-foreground">Aucune prestation.</td></tr>
-                  )}
+                  {!filteredActs.length && <tr><td colSpan={5} className="px-4 py-4 text-sm text-muted-foreground">Aucune prestation.</td></tr>}
                 </tbody>
               </table>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {isDraft && (
-              <button type="button" onClick={() => void completeConsultation()} className="h-10 rounded-lg gradient-primary px-4 text-sm font-medium text-primary-foreground">
-                Compléter la consultation
-              </button>
-            )}
-            {isCompleted && (
-              <button type="button" onClick={startInvoicing} className="h-10 rounded-lg border border-input px-4 text-sm font-medium text-foreground hover:bg-muted">
-                Générer facture
-              </button>
-            )}
+            {isDraft && <button type="button" onClick={() => void completeConsultation()} className="h-10 rounded-lg gradient-primary px-4 text-sm font-medium text-primary-foreground">Compléter la consultation</button>}
+            <button type="button" onClick={() => void downloadReport("pdf")} className="h-10 rounded-lg border border-input px-4 text-sm font-medium text-foreground hover:bg-muted">Télécharger CR PDF</button>
+            <button type="button" onClick={() => void downloadReport("word")} className="h-10 rounded-lg border border-input px-4 text-sm font-medium text-foreground hover:bg-muted">Télécharger CR Word</button>
           </div>
         </>
       )}

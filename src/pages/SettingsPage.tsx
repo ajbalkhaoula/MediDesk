@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Bell, Building2, ClipboardList, Pencil, Plus, Shield, Trash2, User } from "lucide-react";
+import { ArrowLeft, Bell, Building2, ClipboardList, Pencil, Plus, Search, Shield, Trash2, User } from "lucide-react";
 import {
   generateSettingId,
   getAppointmentReasonSettings,
@@ -38,8 +38,39 @@ const SettingsPage = () => {
   const [reasonDuration, setReasonDuration] = useState("45");
   const [editingReasonId, setEditingReasonId] = useState<string | null>(null);
 
+  const [prestationSearch, setPrestationSearch] = useState("");
+  const [reasonSearch, setReasonSearch] = useState("");
+
   const hasPrestations = useMemo(() => prestations.length > 0, [prestations]);
   const hasReasons = useMemo(() => reasons.length > 0, [reasons]);
+
+  const filteredPrestations = useMemo(() => {
+    const term = prestationSearch.trim().toLowerCase();
+    const filtered = term
+      ? prestations.filter((item) => [item.name, String(item.defaultDurationMinutes), item.price.toFixed(2)].join(" ").toLowerCase().includes(term))
+      : prestations;
+
+    const sorted = [...filtered].sort((a, b) => {
+      if (prestationSortBy === "name") return a.name.localeCompare(b.name, "fr");
+      if (prestationSortBy === "duration") return a.defaultDurationMinutes - b.defaultDurationMinutes;
+      return a.price - b.price;
+    });
+    return prestationSortDir === "asc" ? sorted : sorted.reverse();
+  }, [prestations, prestationSearch, prestationSortBy, prestationSortDir]);
+
+  const filteredReasons = useMemo(() => {
+    const term = reasonSearch.trim().toLowerCase();
+    const filtered = term
+      ? reasons.filter((item) => [item.name, String(item.durationMinutes)].join(" ").toLowerCase().includes(term))
+      : reasons;
+
+    const sorted = [...filtered].sort((a, b) => {
+      if (reasonSortBy === "name") return a.name.localeCompare(b.name, "fr");
+      return a.durationMinutes - b.durationMinutes;
+    });
+    return reasonSortDir === "asc" ? sorted : sorted.reverse();
+  }, [reasons, reasonSearch, reasonSortBy, reasonSortDir]);
+
 
   const savePrestations = (next: PrestationSetting[]) => {
     setPrestations(next);
@@ -171,12 +202,17 @@ const SettingsPage = () => {
             )}
           </div>
 
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input value={prestationSearch} onChange={(e) => setPrestationSearch(e.target.value)} placeholder="Rechercher une prestation..." className="h-10 w-full rounded-lg border border-input bg-background pl-10 pr-3 text-sm" />
+          </div>
+
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[560px]">
               <thead>
                 <tr className="bg-muted/40 border-b border-border">
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Acte</th>
-                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Durée</th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Dur?e</th>
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Prix</th>
                   <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
                 </tr>
@@ -185,7 +221,7 @@ const SettingsPage = () => {
                 {!hasPrestations && (
                   <tr><td colSpan={4} className="px-4 py-4 text-sm text-muted-foreground">Aucune prestation.</td></tr>
                 )}
-                {prestations.map((item) => (
+                {filteredPrestations.map((item) => (
                   <tr key={item.id} className="border-b border-border/50">
                     <td className="px-4 py-3 text-sm text-foreground">{item.name}</td>
                     <td className="px-4 py-3 text-sm text-foreground">{item.defaultDurationMinutes} min</td>
@@ -230,12 +266,17 @@ const SettingsPage = () => {
             )}
           </div>
 
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input value={reasonSearch} onChange={(e) => setReasonSearch(e.target.value)} placeholder="Rechercher un motif..." className="h-10 w-full rounded-lg border border-input bg-background pl-10 pr-3 text-sm" />
+          </div>
+
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[560px]">
               <thead>
                 <tr className="bg-muted/40 border-b border-border">
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Motif</th>
-                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Durée</th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Dur?e</th>
                   <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
                 </tr>
               </thead>
@@ -243,7 +284,7 @@ const SettingsPage = () => {
                 {!hasReasons && (
                   <tr><td colSpan={3} className="px-4 py-4 text-sm text-muted-foreground">Aucun motif.</td></tr>
                 )}
-                {reasons.map((item) => (
+                {filteredReasons.map((item) => (
                   <tr key={item.id} className="border-b border-border/50">
                     <td className="px-4 py-3 text-sm text-foreground">{item.name}</td>
                     <td className="px-4 py-3 text-sm text-foreground">{item.durationMinutes} min</td>
@@ -269,3 +310,4 @@ const SettingsPage = () => {
 };
 
 export default SettingsPage;
+

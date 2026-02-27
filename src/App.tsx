@@ -11,6 +11,8 @@ import Calendar from "./pages/Calendar";
 import Assessments from "./pages/Assessments";
 import Reports from "./pages/Reports";
 import SettingsPage from "./pages/SettingsPage";
+import Consultations from "./pages/Consultations";
+import ConsultationPage from "./pages/Consultation";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -29,6 +31,8 @@ const App = () => (
               <Route path="/" element={<Dashboard />} />
               <Route path="/patients" element={<Patients />} />
               <Route path="/calendar" element={<Calendar />} />
+              <Route path="/consultations" element={<Consultations />} />
+              <Route path="/consultations/:consultationId" element={<ConsultationPage />} />
               <Route path="/assessments" element={<Assessments />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/settings" element={<SettingsPage />} />

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
@@ -27,6 +27,12 @@ interface InvoiceLine {
 interface InvoiceDetailResponse {
   invoice: Invoice;
   lines: InvoiceLine[];
+}
+
+function statusLabel(status: Invoice["status"]): string {
+  if (status === "draft") return "Brouillon";
+  if (status === "sent") return "Envoyée";
+  return "Payée";
 }
 
 const InvoiceDetailPage = () => {
@@ -70,11 +76,7 @@ const InvoiceDetailPage = () => {
       await apiRequest(`/api/invoices/${invoice.id}`, {
         method: "PATCH",
         auth: true,
-        body: JSON.stringify({
-          invoice_date: invoiceDate,
-          notes,
-          status,
-        }),
+        body: JSON.stringify({ invoice_date: invoiceDate, notes, status }),
       });
       toast({ title: "Facture mise à jour" });
       await loadDetail();
@@ -113,10 +115,7 @@ const InvoiceDetailPage = () => {
   const deleteLine = async (line: InvoiceLine) => {
     if (!invoice || isPaid) return;
     try {
-      await apiRequest(`/api/invoices/${invoice.id}/lines/${line.id}`, {
-        method: "DELETE",
-        auth: true,
-      });
+      await apiRequest(`/api/invoices/${invoice.id}/lines/${line.id}`, { method: "DELETE", auth: true });
       toast({ title: "Ligne supprimée" });
       await loadDetail();
     } catch (err) {
@@ -142,9 +141,7 @@ const InvoiceDetailPage = () => {
     if (!invoice) return;
     try {
       const response = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000"}/api/invoices/${invoice.id}/pdf`, {
-        headers: {
-          Authorization: `Bearer ${getAuthToken() ?? ""}`,
-        },
+        headers: { Authorization: `Bearer ${getAuthToken() ?? ""}` },
       });
       if (!response.ok) throw new Error("Téléchargement PDF impossible");
       const blob = await response.blob();
@@ -176,35 +173,25 @@ const InvoiceDetailPage = () => {
           <div className="rounded-xl border border-border bg-card p-5 space-y-3" style={{ boxShadow: "var(--shadow-card)" }}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-foreground">{invoice.invoiceNumber}</h2>
-              <span className="rounded-full border px-3 py-1 text-xs font-medium">{invoice.status}</span>
+              <span className="rounded-full border px-3 py-1 text-xs font-medium">{statusLabel(invoice.status)}</span>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} disabled={isPaid} className="h-10 rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-60" />
               <select value={status} onChange={(e) => setStatus(e.target.value as Invoice["status"])} disabled={isPaid} className="h-10 rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-60">
-                <option value="draft">draft</option>
-                <option value="sent">sent</option>
-                <option value="paid">paid</option>
+                <option value="draft">Brouillon</option>
+                <option value="sent">Envoyée</option>
+                <option value="paid">Payée</option>
               </select>
               <div className="text-sm text-foreground self-center">Total TTC: {invoice.totalTtc.toFixed(2)} MAD</div>
             </div>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} disabled={isPaid} rows={2} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm disabled:opacity-60" placeholder="Notes facture..." />
 
             <div className="flex flex-wrap items-center gap-2 print:hidden">
-              <button type="button" onClick={() => void saveHeader()} disabled={isPaid} className="h-10 rounded-lg gradient-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60">
-                Save changes
-              </button>
-              <button type="button" onClick={() => { setStatus("sent"); void saveHeader(); }} disabled={isPaid} className="h-10 rounded-lg border border-input px-4 text-sm disabled:opacity-60">
-                Mark as Sent
-              </button>
-              <button type="button" onClick={() => { setStatus("paid"); void saveHeader(); }} disabled={isPaid} className="h-10 rounded-lg border border-input px-4 text-sm disabled:opacity-60">
-                Mark as Paid
-              </button>
-              <button type="button" onClick={() => void downloadPdf()} className="h-10 rounded-lg border border-input px-4 text-sm">
-                Download PDF
-              </button>
-              <button type="button" onClick={() => window.print()} className="h-10 rounded-lg border border-input px-4 text-sm">
-                Print
-              </button>
+              <button type="button" onClick={() => void saveHeader()} disabled={isPaid} className="h-10 rounded-lg gradient-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60">Enregistrer</button>
+              <button type="button" onClick={() => { setStatus("sent"); void saveHeader(); }} disabled={isPaid} className="h-10 rounded-lg border border-input px-4 text-sm disabled:opacity-60">Marquer envoyée</button>
+              <button type="button" onClick={() => { setStatus("paid"); void saveHeader(); }} disabled={isPaid} className="h-10 rounded-lg border border-input px-4 text-sm disabled:opacity-60">Marquer payée</button>
+              <button type="button" onClick={() => void downloadPdf()} className="h-10 rounded-lg border border-input px-4 text-sm">Télécharger PDF</button>
+              <button type="button" onClick={() => window.print()} className="h-10 rounded-lg border border-input px-4 text-sm">Imprimer</button>
             </div>
           </div>
 
@@ -213,11 +200,11 @@ const InvoiceDetailPage = () => {
               <table className="w-full min-w-[980px]">
                 <thead>
                   <tr className="border-b border-border bg-muted/40">
-                    <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Label</th>
-                    <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Qty</th>
-                    <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Unit Price</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Libellé</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Qté</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Prix unitaire</th>
                     <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total</th>
-                    <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Remark</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Remarque</th>
                     <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground print:hidden">Actions</th>
                   </tr>
                 </thead>
@@ -226,29 +213,15 @@ const InvoiceDetailPage = () => {
                     const priceChanged = line.unitPrice !== line.originalUnitPrice;
                     return (
                       <tr key={line.id} className="border-b border-border/50">
-                        <td className="px-4 py-3">
-                          <input value={line.label} onChange={(e) => updateLine(line.id, "label", e.target.value)} disabled={isPaid} className="h-9 w-full rounded border border-input bg-background px-2 text-sm disabled:opacity-60" />
-                        </td>
-                        <td className="px-4 py-3">
-                          <input type="number" min={1} value={line.quantity} onChange={(e) => updateLine(line.id, "quantity", Number(e.target.value))} disabled={isPaid} className="h-9 w-20 rounded border border-input bg-background px-2 text-sm disabled:opacity-60" />
-                        </td>
-                        <td className="px-4 py-3">
-                          <input type="number" min={0} step="0.01" value={line.unitPrice} onChange={(e) => updateLine(line.id, "unitPrice", Number(e.target.value))} disabled={isPaid} className="h-9 w-28 rounded border border-input bg-background px-2 text-sm disabled:opacity-60" />
-                        </td>
-                        <td className="px-4 py-3">
-                          <input type="number" min={0} step="0.01" value={line.total} onChange={(e) => updateLine(line.id, "total", Number(e.target.value))} disabled={isPaid} className="h-9 w-28 rounded border border-input bg-background px-2 text-sm disabled:opacity-60" />
-                        </td>
-                        <td className="px-4 py-3">
-                          <input value={line.remark ?? ""} onChange={(e) => updateLine(line.id, "remark", e.target.value)} disabled={isPaid} placeholder={priceChanged ? "Required when price changes" : "Optional"} className={`h-9 w-full rounded border px-2 text-sm disabled:opacity-60 ${priceChanged ? "border-warning" : "border-input"} bg-background`} />
-                        </td>
+                        <td className="px-4 py-3"><input value={line.label} onChange={(e) => updateLine(line.id, "label", e.target.value)} disabled={isPaid} className="h-9 w-full rounded border border-input bg-background px-2 text-sm disabled:opacity-60" /></td>
+                        <td className="px-4 py-3"><input type="number" min={1} value={line.quantity} onChange={(e) => updateLine(line.id, "quantity", Number(e.target.value))} disabled={isPaid} className="h-9 w-20 rounded border border-input bg-background px-2 text-sm disabled:opacity-60" /></td>
+                        <td className="px-4 py-3"><input type="number" min={0} step="0.01" value={line.unitPrice} onChange={(e) => updateLine(line.id, "unitPrice", Number(e.target.value))} disabled={isPaid} className="h-9 w-28 rounded border border-input bg-background px-2 text-sm disabled:opacity-60" /></td>
+                        <td className="px-4 py-3"><input type="number" min={0} step="0.01" value={line.total} onChange={(e) => updateLine(line.id, "total", Number(e.target.value))} disabled={isPaid} className="h-9 w-28 rounded border border-input bg-background px-2 text-sm disabled:opacity-60" /></td>
+                        <td className="px-4 py-3"><input value={line.remark ?? ""} onChange={(e) => updateLine(line.id, "remark", e.target.value)} disabled={isPaid} placeholder={priceChanged ? "Obligatoire si le prix change" : "Optionnel"} className={`h-9 w-full rounded border px-2 text-sm disabled:opacity-60 ${priceChanged ? "border-warning" : "border-input"} bg-background`} /></td>
                         <td className="px-4 py-3 text-right print:hidden">
                           <div className="inline-flex items-center gap-2">
-                            <button type="button" onClick={() => void saveLine(line)} disabled={isPaid} className="rounded border border-input px-2 py-1 text-xs disabled:opacity-60">
-                              Save line
-                            </button>
-                            <button type="button" onClick={() => void deleteLine(line)} disabled={isPaid} className="rounded border border-input px-2 py-1 text-xs disabled:opacity-60">
-                              Delete
-                            </button>
+                            <button type="button" onClick={() => void saveLine(line)} disabled={isPaid} className="rounded border border-input px-2 py-1 text-xs disabled:opacity-60">Enregistrer ligne</button>
+                            <button type="button" onClick={() => void deleteLine(line)} disabled={isPaid} className="rounded border border-input px-2 py-1 text-xs disabled:opacity-60">Supprimer</button>
                           </div>
                         </td>
                       </tr>
@@ -256,11 +229,7 @@ const InvoiceDetailPage = () => {
                   })}
                 </tbody>
                 <tfoot>
-                  <tr>
-                    <td colSpan={6} className="px-4 py-3 text-right text-sm font-semibold text-foreground">
-                      Total calculé: {computedTotal.toFixed(2)} MAD
-                    </td>
-                  </tr>
+                  <tr><td colSpan={6} className="px-4 py-3 text-right text-sm font-semibold text-foreground">Total calculé: {computedTotal.toFixed(2)} MAD</td></tr>
                 </tfoot>
               </table>
             </div>

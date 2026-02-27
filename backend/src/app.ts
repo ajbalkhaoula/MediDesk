@@ -1,4 +1,4 @@
-import "express-async-errors";
+﻿import "express-async-errors";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -8,6 +8,7 @@ import { authRouter } from "./routes/auth.js";
 import { healthRouter } from "./routes/health.js";
 import { patientsRouter } from "./routes/patients.js";
 import { appointmentsRouter } from "./routes/appointments.js";
+import { consultationsRouter } from "./routes/consultations.js";
 
 export const app = express();
 
@@ -20,6 +21,7 @@ app.use("/api/health", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/patients", patientsRouter);
 app.use("/api/appointments", appointmentsRouter);
+app.use("/api/consultations", consultationsRouter);
 
 app.use((err: Error & { statusCode?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (typeof err.statusCode === "number" && err.statusCode >= 400 && err.statusCode < 500) {

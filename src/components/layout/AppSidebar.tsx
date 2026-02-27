@@ -1,8 +1,9 @@
-import { Link, useLocation, useNavigate } from "react-router-dom";
+﻿import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Users,
   CalendarDays,
+  ClipboardCheck,
   ClipboardList,
   FileText,
   Settings,
@@ -14,9 +15,10 @@ const navItems = [
   { icon: LayoutDashboard, label: "Tableau de bord", path: "/" },
   { icon: Users, label: "Patients", path: "/patients" },
   { icon: CalendarDays, label: "Rendez-vous", path: "/calendar" },
+  { icon: ClipboardCheck, label: "Consultations", path: "/consultations" },
   { icon: ClipboardList, label: "Bilans", path: "/assessments" },
   { icon: FileText, label: "Rapports", path: "/reports" },
-  { icon: Settings, label: "Parametres", path: "/settings" },
+  { icon: Settings, label: "Paramètres", path: "/settings" },
 ];
 
 interface AppSidebarProps {
@@ -92,7 +94,7 @@ const AppSidebar = ({ mobileOpen, onMobileClose }: AppSidebarProps) => {
             <button
               onClick={handleLogout}
               className="rounded-md p-1.5 text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
-              aria-label="Se deconnecter"
+              aria-label="Se déconnecter"
             >
               <LogOut className="h-4 w-4" />
             </button>

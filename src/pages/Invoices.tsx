@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { ArrowDownAZ, ArrowUpAZ, Plus, Search } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 import { getPrestationSettings } from "@/lib/scheduling";
@@ -28,6 +28,12 @@ interface InvoicesResponse {
   total: number;
 }
 
+function statusLabel(status: InvoiceItem["status"]): string {
+  if (status === "draft") return "Brouillon";
+  if (status === "sent") return "Envoyée";
+  return "Payée";
+}
+
 const InvoicesPage = () => {
   const navigate = useNavigate();
   const prestations = useMemo(() => getPrestationSettings(), []);
@@ -45,6 +51,9 @@ const InvoicesPage = () => {
   const [prestationId, setPrestationId] = useState("");
   const [minAmount, setMinAmount] = useState("");
   const [maxAmount, setMaxAmount] = useState("");
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"patient" | "date">("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const [showCreate, setShowCreate] = useState(false);
   const [createPatientId, setCreatePatientId] = useState("");
@@ -120,6 +129,40 @@ const InvoicesPage = () => {
     }
   }, [showCreate, createMode, createPatientId]);
 
+  const sortedInvoices = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const filtered = term
+      ? invoices.filter((invoice) => {
+          return [
+            invoice.invoiceNumber,
+            invoice.patientName ?? "",
+            invoice.invoiceDate,
+            statusLabel(invoice.status),
+            invoice.totalTtc.toFixed(2),
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(term);
+        })
+      : invoices;
+
+    const sorted = [...filtered].sort((a, b) => {
+      if (sortBy === "patient") return (a.patientName ?? "").localeCompare(b.patientName ?? "", "fr");
+      return new Date(a.invoiceDate).getTime() - new Date(b.invoiceDate).getTime();
+    });
+
+    return sortDir === "asc" ? sorted : sorted.reverse();
+  }, [invoices, search, sortBy, sortDir]);
+
+  const toggleSort = (key: "patient" | "date") => {
+    if (sortBy === key) {
+      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortBy(key);
+    setSortDir("asc");
+  };
+
   const createInvoice = async () => {
     try {
       if (createMode === "acts") {
@@ -176,7 +219,7 @@ const InvoicesPage = () => {
         <h2 className="text-xl font-semibold text-foreground">Factures</h2>
         <button type="button" onClick={() => setShowCreate((prev) => !prev)} className="inline-flex h-10 items-center gap-2 rounded-lg gradient-primary px-4 text-sm font-medium text-primary-foreground">
           <Plus className="h-4 w-4" />
-          New Invoice
+          Nouvelle facture
         </button>
       </div>
 
@@ -244,9 +287,9 @@ const InvoicesPage = () => {
           </select>
           <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="h-10 rounded-lg border border-input bg-background px-3 text-sm">
             <option value="">Tous statuts</option>
-            <option value="draft">Draft</option>
-            <option value="sent">Sent</option>
-            <option value="paid">Paid</option>
+            <option value="draft">Brouillon</option>
+            <option value="sent">Envoyée</option>
+            <option value="paid">Payée</option>
           </select>
           <input type="date" value={dateFrom} onChange={(e) => { setPage(1); setDateFrom(e.target.value); }} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
           <input type="date" value={dateTo} onChange={(e) => { setPage(1); setDateTo(e.target.value); }} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
@@ -260,33 +303,51 @@ const InvoicesPage = () => {
           <input type="number" min={0} value={maxAmount} onChange={(e) => { setPage(1); setMaxAmount(e.target.value); }} placeholder="Max" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
         </div>
 
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Rechercher dans les factures..."
+            className="h-10 w-full rounded-lg border border-input bg-background pl-10 pr-3 text-sm"
+          />
+        </div>
+
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[900px]">
             <thead>
               <tr className="bg-muted/40 border-b border-border">
-                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Invoice #</th>
-                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Patient</th>
-                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Date</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Facture #</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <button type="button" onClick={() => toggleSort("patient")} className="inline-flex items-center gap-1 hover:text-foreground">
+                    Patient {sortBy === "patient" && (sortDir === "asc" ? <ArrowUpAZ className="h-3.5 w-3.5" /> : <ArrowDownAZ className="h-3.5 w-3.5" />)}
+                  </button>
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <button type="button" onClick={() => toggleSort("date")} className="inline-flex items-center gap-1 hover:text-foreground">
+                    Date {sortBy === "date" && (sortDir === "asc" ? <ArrowUpAZ className="h-3.5 w-3.5" /> : <ArrowDownAZ className="h-3.5 w-3.5" />)}
+                  </button>
+                </th>
                 <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total TTC</th>
-                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Statut</th>
                 <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading && <tr><td colSpan={6} className="px-4 py-4 text-sm text-muted-foreground">Chargement...</td></tr>}
-              {!loading && !invoices.length && <tr><td colSpan={6} className="px-4 py-4 text-sm text-muted-foreground">Aucune facture.</td></tr>}
-              {!loading && invoices.map((invoice) => (
+              {!loading && !sortedInvoices.length && <tr><td colSpan={6} className="px-4 py-4 text-sm text-muted-foreground">Aucune facture.</td></tr>}
+              {!loading && sortedInvoices.map((invoice) => (
                 <tr key={invoice.id} className="border-b border-border/50">
                   <td className="px-4 py-3 text-sm text-foreground">{invoice.invoiceNumber}</td>
                   <td className="px-4 py-3 text-sm text-foreground">{invoice.patientName ?? "-"}</td>
                   <td className="px-4 py-3 text-sm text-foreground">{invoice.invoiceDate}</td>
                   <td className="px-4 py-3 text-sm text-foreground">{invoice.totalTtc.toFixed(2)} MAD</td>
-                  <td className="px-4 py-3 text-sm text-foreground">{invoice.status}</td>
+                  <td className="px-4 py-3 text-sm text-foreground">{statusLabel(invoice.status)}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-2">
-                      <button type="button" onClick={() => navigate(`/invoices/${invoice.id}`)} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted">View</button>
-                      <button type="button" onClick={() => navigate(`/invoices/${invoice.id}`)} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted">Edit</button>
-                      <button type="button" disabled={invoice.status !== "draft"} onClick={() => void deleteInvoice(invoice)} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50">Delete</button>
+                      <button type="button" onClick={() => navigate(`/invoices/${invoice.id}`)} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted">Voir</button>
+                      <button type="button" onClick={() => navigate(`/invoices/${invoice.id}`)} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted">Modifier</button>
+                      <button type="button" disabled={invoice.status !== "draft"} onClick={() => void deleteInvoice(invoice)} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50">Supprimer</button>
                     </div>
                   </td>
                 </tr>
@@ -297,12 +358,13 @@ const InvoicesPage = () => {
       </div>
 
       <div className="flex items-center justify-end gap-2">
-        <button type="button" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={page <= 1} className="h-9 rounded-lg border border-input px-3 text-sm disabled:opacity-50">Prev</button>
+        <button type="button" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={page <= 1} className="h-9 rounded-lg border border-input px-3 text-sm disabled:opacity-50">Précédent</button>
         <span className="text-sm text-muted-foreground">Page {page} / {maxPage}</span>
-        <button type="button" onClick={() => setPage((prev) => Math.min(maxPage, prev + 1))} disabled={page >= maxPage} className="h-9 rounded-lg border border-input px-3 text-sm disabled:opacity-50">Next</button>
+        <button type="button" onClick={() => setPage((prev) => Math.min(maxPage, prev + 1))} disabled={page >= maxPage} className="h-9 rounded-lg border border-input px-3 text-sm disabled:opacity-50">Suivant</button>
       </div>
     </div>
   );
 };
 
 export default InvoicesPage;
+
