@@ -1,0 +1,1 @@
+docker run --rm -it -p 3002:3000 -v C:\Users\k.ajbal\cabortho-hub-main:/app -w /app node:25-alpine sh -lc "npm run dev -- --host 0.0.0.0 --port 3000"
