@@ -2,6 +2,8 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowDownAZ, ArrowUpAZ, Search } from "lucide-react";
+import ListPagination from "@/components/ui/list-pagination";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 
@@ -37,8 +39,8 @@ interface ConsultationsResponse {
 const statusOptions = [
   { value: "all", label: "Tous" },
   { value: "draft", label: "Brouillon" },
-  { value: "completed", label: "Effectué" },
-  { value: "cancelled", label: "Annulé" },
+  { value: "completed", label: "Effectuée" },
+  { value: "cancelled", label: "Annulée" },
   { value: "no_show", label: "Absent" },
 ] as const;
 
@@ -49,18 +51,27 @@ const groupOptions = [
   { value: "act", label: "Par type d'acte" },
 ] as const;
 
+const activeFilterClass = "border-primary/40 bg-primary/10 text-primary";
+const inactiveFilterClass = "border-input bg-background text-foreground";
+
 function formatStatus(status: ConsultationItem["status"]): string {
   if (status === "draft") return "Brouillon";
-  if (status === "completed") return "Effectué";
-  if (status === "cancelled") return "Annulé";
+  if (status === "completed") return "Effectuée";
+  if (status === "cancelled") return "Annulée";
   return "Absent";
 }
 
-function groupKey(item: ConsultationItem, groupBy: "none" | "patient" | "date" | "act"): string {
-  if (groupBy === "patient") return item.patientName;
-  if (groupBy === "date") return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(item.startTime));
-  if (groupBy === "act") return item.acts[0]?.label ?? "Sans acte";
-  return "Toutes les consultations";
+function groupMeta(item: ConsultationItem, groupBy: "none" | "patient" | "date" | "act"): { key: string; label: string } {
+  if (groupBy === "patient") return { key: item.patientId, label: item.patientName };
+  if (groupBy === "date") {
+    const label = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(item.startTime));
+    return { key: label, label };
+  }
+  if (groupBy === "act") {
+    const label = item.acts[0]?.label ?? "Sans acte";
+    return { key: label, label };
+  }
+  return { key: "all", label: "Toutes les consultations" };
 }
 
 function combineLocalDateTimeToIso(date: string, time: string): string {
@@ -81,7 +92,8 @@ const Consultations = () => {
   const [groupBy, setGroupBy] = useState<"none" | "patient" | "date" | "act">("none");
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"patient" | "date">("date");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
 
   const [showCreate, setShowCreate] = useState(false);
   const [createPatientId, setCreatePatientId] = useState("");
@@ -136,16 +148,34 @@ const Consultations = () => {
     return sortDir === "asc" ? sorted : sorted.reverse();
   }, [filteredConsultations, sortBy, sortDir]);
 
+  const pageSize = 12;
+  const maxPage = Math.max(1, Math.ceil(sortedConsultations.length / pageSize));
+
+  const paginatedConsultations = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return sortedConsultations.slice(start, start + pageSize);
+  }, [page, sortedConsultations]);
+
   const groupedConsultations = useMemo(() => {
-    const groups = new Map<string, ConsultationItem[]>();
-    for (const item of sortedConsultations) {
-      const key = groupKey(item, groupBy);
-      const current = groups.get(key) ?? [];
-      current.push(item);
-      groups.set(key, current);
+    const groups = new Map<string, { label: string; items: ConsultationItem[] }>();
+    for (const item of paginatedConsultations) {
+      const meta = groupMeta(item, groupBy);
+      const current = groups.get(meta.key) ?? { label: meta.label, items: [] };
+      current.items.push(item);
+      groups.set(meta.key, current);
     }
-    return Array.from(groups.entries());
-  }, [sortedConsultations, groupBy]);
+    return Array.from(groups.entries()).map(([key, value]) => ({ key, label: value.label, items: value.items }));
+  }, [paginatedConsultations, groupBy]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [status, patientId, dateFrom, dateTo, actType, groupBy, search, sortBy, sortDir]);
+
+  useEffect(() => {
+    if (page > maxPage) {
+      setPage(maxPage);
+    }
+  }, [page, maxPage]);
 
   const loadPatients = async () => {
     const data = await apiRequest<{ patients: PatientItem[] }>("/api/patients?status=all", { auth: true });
@@ -214,7 +244,7 @@ const Consultations = () => {
       setShowCreate(false);
       setCreateNotes("");
       await loadConsultations();
-      navigate(`/consultations/${created.consultation.id}`);
+      navigate(`/consultations/${created.consultation.id}`, { state: { openDetail: true } });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Création consultation impossible";
       toast({ title: "Erreur", description: message, variant: "destructive" });
@@ -230,54 +260,97 @@ const Consultations = () => {
         </button>
       </div>
 
-      {showCreate && (
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-            <select value={createPatientId} onChange={(e) => setCreatePatientId(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm md:col-span-2">
-              <option value="">Sélectionner un patient</option>
-              {patients.map((patient) => (
-                <option key={patient.id} value={patient.id}>{patient.firstName} {patient.lastName}</option>
-              ))}
-            </select>
-            <input type="date" value={createDate} onChange={(e) => setCreateDate(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
-            <input type="time" value={createStartTime} onChange={(e) => setCreateStartTime(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
-            <input type="time" value={createEndTime} onChange={(e) => setCreateEndTime(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
-            <input value={createMotif} onChange={(e) => setCreateMotif(e.target.value)} placeholder="Motif" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Nouvelle consultation sans RDV</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <select value={createPatientId} onChange={(e) => setCreatePatientId(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm">
+                <option value="">Sélectionner un patient</option>
+                {patients.map((patient) => (
+                  <option key={patient.id} value={patient.id}>{patient.firstName} {patient.lastName}</option>
+                ))}
+              </select>
+              <input value={createMotif} onChange={(e) => setCreateMotif(e.target.value)} placeholder="Motif" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+              <input type="date" value={createDate} onChange={(e) => setCreateDate(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+              <div className="grid grid-cols-2 gap-3">
+                <input type="time" value={createStartTime} onChange={(e) => setCreateStartTime(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+                <input type="time" value={createEndTime} onChange={(e) => setCreateEndTime(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+              </div>
+            </div>
+            <textarea value={createNotes} onChange={(e) => setCreateNotes(e.target.value)} rows={3} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" placeholder="Notes (optionnel)" />
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setShowCreate(false)} className="h-10 rounded-lg border border-input px-4 text-sm font-medium hover:bg-muted">Annuler</button>
+              <button type="button" onClick={() => void createManualConsultation()} className="h-10 rounded-lg gradient-primary px-4 text-sm font-medium text-primary-foreground">Créer brouillon</button>
+            </div>
           </div>
-          <textarea value={createNotes} onChange={(e) => setCreateNotes(e.target.value)} rows={2} className="mt-3 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" placeholder="Notes (optionnel)" />
-          <div className="mt-3 flex justify-end gap-2">
-            <button type="button" onClick={() => setShowCreate(false)} className="h-10 rounded-lg border border-input px-4 text-sm font-medium hover:bg-muted">Annuler</button>
-            <button type="button" onClick={() => void createManualConsultation()} className="h-10 rounded-lg gradient-primary px-4 text-sm font-medium text-primary-foreground">Créer brouillon</button>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       <div className="rounded-xl border border-border bg-card p-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm">
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className={`h-10 rounded-lg border px-3 text-sm ${status !== "all" ? activeFilterClass : inactiveFilterClass}`}
+          >
+            <option value="all">Statut</option>
             {statusOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
 
-          <select value={patientId} onChange={(e) => setPatientId(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm">
-            <option value="">Tous les patients</option>
+          <select
+            value={patientId}
+            onChange={(e) => setPatientId(e.target.value)}
+            className={`h-10 rounded-lg border px-3 text-sm ${patientId ? activeFilterClass : inactiveFilterClass}`}
+          >
+            <option value="">Patient</option>
             {patients.map((patient) => (
               <option key={patient.id} value={patient.id}>{patient.firstName} {patient.lastName}</option>
             ))}
           </select>
 
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+          <label className={`relative flex h-10 items-center rounded-lg border px-3 text-sm ${dateFrom ? activeFilterClass : inactiveFilterClass}`}>
+            {!dateFrom && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 truncate text-sm text-muted-foreground">Date début</span>}
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className={`w-full bg-transparent text-sm outline-none ${dateFrom ? "" : "text-transparent caret-transparent"}`}
+              aria-label="Date début"
+            />
+          </label>
+          <label className={`relative flex h-10 items-center rounded-lg border px-3 text-sm ${dateTo ? activeFilterClass : inactiveFilterClass}`}>
+            {!dateTo && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 truncate text-sm text-muted-foreground">Date fin</span>}
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className={`w-full bg-transparent text-sm outline-none ${dateTo ? "" : "text-transparent caret-transparent"}`}
+              aria-label="Date de fin"
+            />
+          </label>
 
-          <select value={actType} onChange={(e) => setActType(e.target.value)} className="h-10 rounded-lg border border-input bg-background px-3 text-sm">
-            <option value="">Tous les types d'acte</option>
+          <select
+            value={actType}
+            onChange={(e) => setActType(e.target.value)}
+            className={`h-10 rounded-lg border px-3 text-sm ${actType ? activeFilterClass : inactiveFilterClass}`}
+          >
+            <option value="">Type d'acte</option>
             {actTypeOptions.map((option) => (
               <option key={option.id} value={option.id}>{option.label}</option>
             ))}
           </select>
 
-          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as "none" | "patient" | "date" | "act")} className="h-10 rounded-lg border border-input bg-background px-3 text-sm">
+          <select
+            value={groupBy}
+            onChange={(e) => setGroupBy(e.target.value as "none" | "patient" | "date" | "act")}
+            className={`h-10 rounded-lg border px-3 text-sm ${groupBy !== "none" ? activeFilterClass : inactiveFilterClass}`}
+          >
+            <option value="none">Regroupement</option>
             {groupOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
@@ -299,9 +372,9 @@ const Consultations = () => {
           <div className="rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground">Aucune consultation.</div>
         )}
 
-        {groupedConsultations.map(([group, items]) => (
-          <div key={group} className="rounded-xl border border-border bg-card overflow-hidden">
-            <div className="border-b border-border bg-muted/40 px-4 py-2 text-sm font-semibold text-foreground">{group}</div>
+        {groupedConsultations.map((group) => (
+          <div key={group.key} className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="border-b border-border bg-muted/40 px-4 py-2 text-sm font-semibold text-foreground">{group.label}</div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[900px]">
                 <thead>
@@ -319,13 +392,20 @@ const Consultations = () => {
                     <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Motif</th>
                     <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actes</th>
                     <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Statut</th>
-                    <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item) => (
+                  {group.items.map((item) => (
                     <tr key={item.id} className="border-b border-border/50">
-                      <td className="px-4 py-3 text-sm text-foreground">{item.patientName}</td>
+                      <td className="px-4 py-3 text-sm text-foreground">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/consultations/${item.id}`)}
+                          className="font-medium text-left text-foreground underline-offset-4 hover:underline"
+                        >
+                          {item.patientName}
+                        </button>
+                      </td>
                       <td className="px-4 py-3 text-sm text-foreground">
                         {new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(item.startTime))}
                       </td>
@@ -335,21 +415,12 @@ const Consultations = () => {
                           {item.acts.length === 0 && <span className="text-muted-foreground">-</span>}
                           {item.acts.map((act) => (
                             <span key={act.id} className="rounded-md border border-border px-2 py-0.5 text-xs">
-                              {act.label} x{act.quantity}
+                              {act.label}
                             </span>
                           ))}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-foreground">{formatStatus(item.status)}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/consultations/${item.id}`)}
-                          className="rounded-md border border-input px-3 py-1.5 text-xs hover:bg-muted"
-                        >
-                          Ouvrir
-                        </button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -358,9 +429,19 @@ const Consultations = () => {
           </div>
         ))}
       </div>
+
+      {!loading && sortedConsultations.length > 0 && (
+        <ListPagination
+          page={page}
+          maxPage={maxPage}
+          onPrevious={() => setPage((prev) => Math.max(1, prev - 1))}
+          onNext={() => setPage((prev) => Math.min(maxPage, prev + 1))}
+        />
+      )}
     </motion.div>
   );
 };
 
 export default Consultations;
+
 

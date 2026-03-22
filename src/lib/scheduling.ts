@@ -1,4 +1,4 @@
-export interface PrestationSetting {
+﻿export interface PrestationSetting {
   id: string;
   name: string;
   defaultDurationMinutes: number;
@@ -11,8 +11,10 @@ export interface AppointmentReasonSetting {
   durationMinutes: number;
 }
 
-const PRESTATIONS_KEY = "cabortho.settings.prestations";
-const REASONS_KEY = "cabortho.settings.reasons";
+const PRESTATIONS_KEY = "medidesk.settings.prestations";
+const LEGACY_PRESTATIONS_KEY = "cabortho.settings.prestations";
+const REASONS_KEY = "medidesk.settings.reasons";
+const LEGACY_REASONS_KEY = "cabortho.settings.reasons";
 
 const defaultPrestations: PrestationSetting[] = [
   { id: "consultation", name: "Consultation", defaultDurationMinutes: 45, price: 300 },
@@ -40,24 +42,41 @@ function safeParseArray<T>(value: string | null, fallback: T[]): T[] {
   }
 }
 
+function sanitizeStoredLabel(value: string): string {
+  return value
+    .replace(/R[�Ã]union\s+[�Ã]cole/g, "Réunion école")
+    .replace(/S[�Ã]ance r[�Ã][�Ã]ducation/g, "Séance rééducation")
+    .replace(/Param[�Ã]tres/g, "Paramètres");
+}
+
 export function getPrestationSettings(): PrestationSetting[] {
   if (typeof window === "undefined") return defaultPrestations;
-  return safeParseArray<PrestationSetting>(window.localStorage.getItem(PRESTATIONS_KEY), defaultPrestations);
+  const values = safeParseArray<PrestationSetting>(
+    window.localStorage.getItem(PRESTATIONS_KEY) ?? window.localStorage.getItem(LEGACY_PRESTATIONS_KEY),
+    defaultPrestations,
+  );
+  return values.map((item) => ({ ...item, name: sanitizeStoredLabel(item.name) }));
 }
 
 export function setPrestationSettings(values: PrestationSetting[]): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(PRESTATIONS_KEY, JSON.stringify(values));
+  window.localStorage.removeItem(LEGACY_PRESTATIONS_KEY);
 }
 
 export function getAppointmentReasonSettings(): AppointmentReasonSetting[] {
   if (typeof window === "undefined") return defaultReasons;
-  return safeParseArray<AppointmentReasonSetting>(window.localStorage.getItem(REASONS_KEY), defaultReasons);
+  const values = safeParseArray<AppointmentReasonSetting>(
+    window.localStorage.getItem(REASONS_KEY) ?? window.localStorage.getItem(LEGACY_REASONS_KEY),
+    defaultReasons,
+  );
+  return values.map((item) => ({ ...item, name: sanitizeStoredLabel(item.name) }));
 }
 
 export function setAppointmentReasonSettings(values: AppointmentReasonSetting[]): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(REASONS_KEY, JSON.stringify(values));
+  window.localStorage.removeItem(LEGACY_REASONS_KEY);
 }
 
 export function generateSettingId(name: string): string {

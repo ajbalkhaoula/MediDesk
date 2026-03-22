@@ -1,4 +1,4 @@
-﻿import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Users,
@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   FileText,
+  Receipt,
   Settings,
   LogOut,
 } from "lucide-react";
@@ -16,8 +17,7 @@ const navItems = [
   { icon: Users, label: "Patients", path: "/patients" },
   { icon: CalendarDays, label: "Rendez-vous", path: "/calendar" },
   { icon: ClipboardCheck, label: "Consultations", path: "/consultations" },
-  { icon: ClipboardList, label: "Bilans", path: "/assessments" },
-  { icon: FileText, label: "Rapports", path: "/reports" },
+  { icon: Receipt, label: "Factures", path: "/invoices" },
   { icon: Settings, label: "Paramètres", path: "/settings" },
 ];
 
@@ -47,7 +47,7 @@ const AppSidebar = ({ mobileOpen, onMobileClose }: AppSidebarProps) => {
         />
       )}
       <aside
-        className={`fixed left-0 top-0 z-40 flex h-screen w-64 flex-col bg-sidebar text-sidebar-foreground transition-transform duration-200 ${
+        className={`fixed left-0 top-0 z-40 flex h-screen w-64 flex-col overflow-y-auto bg-sidebar text-sidebar-foreground transition-transform duration-200 ${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         } lg:translate-x-0`}
       >

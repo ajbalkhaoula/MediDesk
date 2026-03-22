@@ -1,5 +1,5 @@
 {
-  "name": "cabortho-api",
+  "name": "medidesk-api",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -34,3 +34,4 @@
     "typescript": "^5.7.2"
   }
 }
+

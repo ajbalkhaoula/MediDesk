@@ -57,6 +57,32 @@ interface ConsultationActRow {
   created_at: string;
 }
 
+function cabinetLogoBuffer(logoUrl: string | null): Buffer | null {
+  if (!logoUrl || !logoUrl.startsWith("data:image/")) return null;
+  const parts = logoUrl.split(",", 2);
+  if (parts.length !== 2) return null;
+  try {
+    return Buffer.from(parts[1], "base64");
+  } catch {
+    return null;
+  }
+}
+
+function slugifyFilenamePart(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+}
+
+function exportDatePart(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "date-inconnue";
+  return date.toISOString().slice(0, 10);
+}
+
 function normalizeNullable(value?: string | null): string | null {
   if (value === undefined || value === null) return null;
   const trimmed = value.trim();
@@ -304,6 +330,50 @@ consultationsRouter.patch("/:id", async (req: AuthenticatedRequest, res) => {
   return res.json({ consultation: toClientConsultation(updated.rows[0]) });
 });
 
+consultationsRouter.delete("/:id", async (req: AuthenticatedRequest, res) => {
+  const cabinetId = await ensureUserCabinet(req.user!.id);
+  const consultationResult = await pool.query<ConsultationRow>(
+    "SELECT * FROM consultations WHERE id = $1 AND cabinet_id = $2",
+    [req.params.id, cabinetId],
+  );
+  if (!consultationResult.rowCount) {
+    return res.status(404).json({ message: "Consultation not found" });
+  }
+
+  const consultation = consultationResult.rows[0];
+  if (consultation.status !== "draft") {
+    return res.status(403).json({ message: "Only draft consultations can be deleted." });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    await client.query("DELETE FROM consultation_acts WHERE consultation_id = $1", [req.params.id]);
+    await client.query("DELETE FROM consultations WHERE id = $1 AND cabinet_id = $2", [req.params.id, cabinetId]);
+
+    if (consultation.appointment_id) {
+      await client.query(
+        `UPDATE appointments
+         SET status = 'scheduled',
+             updated_at = now()
+         WHERE id = $1
+           AND cabinet_id = $2`,
+        [consultation.appointment_id, cabinetId],
+      );
+    }
+
+    await client.query("COMMIT");
+    return res.status(204).send();
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error(error);
+    return res.status(500).json({ message: "Unable to delete consultation" });
+  } finally {
+    client.release();
+  }
+});
+
 consultationsRouter.post("/:id/acts", async (req: AuthenticatedRequest, res) => {
   const parsed = addActSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -407,14 +477,14 @@ consultationsRouter.post("/:id/complete", async (req: AuthenticatedRequest, res)
         `UPDATE patients
          SET sessions_count = (
                SELECT COUNT(*)::int
-               FROM appointments
+               FROM consultations
                WHERE cabinet_id = $1
                  AND patient_id = $2
                  AND status = 'completed'
              ),
              last_session_date = (
-               SELECT MAX(starts_at::date)
-               FROM appointments
+               SELECT MAX(start_time::date)
+               FROM consultations
                WHERE cabinet_id = $1
                  AND patient_id = $2
                  AND status = 'completed'
@@ -447,11 +517,15 @@ consultationsRouter.get("/:id/pdf", async (req: AuthenticatedRequest, res) => {
       patient_birth_date: string | null;
       cabinet_name: string;
       cabinet_address: string | null;
+      cabinet_phone: string | null;
+      cabinet_email: string | null;
+      cabinet_ICE: string | null;
+      cabinet_IF: string | null;
       cabinet_logo_url: string | null;
     }
   >(
     `SELECT c.*, p.first_name AS patient_first_name, p.last_name AS patient_last_name, p.birth_date AS patient_birth_date,
-            cab.name AS cabinet_name, cab.address AS cabinet_address, cab.logo_url AS cabinet_logo_url
+            cab.name AS cabinet_name, cab.address AS cabinet_address, cab.phone AS cabinet_phone, cab.email AS cabinet_email, cab.siret AS cabinet_ICE, cab.adeli AS cabinet_IF, cab.logo_url AS cabinet_logo_url
      FROM consultations c
      JOIN patients p ON p.id = c.patient_id
      JOIN cabinets cab ON cab.id = c.cabinet_id
@@ -469,41 +543,99 @@ consultationsRouter.get("/:id/pdf", async (req: AuthenticatedRequest, res) => {
     [req.params.id],
   );
 
-  const doc = new PDFDocument({ margin: 40 });
+  const doc = new PDFDocument({ margin: 40, size: "A4" });
   const buffers: Buffer[] = [];
   doc.on("data", (chunk) => buffers.push(chunk));
 
-  doc.fontSize(18).text(item.cabinet_name);
-  if (item.cabinet_address) doc.fontSize(10).text(item.cabinet_address);
-  if (item.cabinet_logo_url) doc.fontSize(9).text(`Logo: ${item.cabinet_logo_url}`);
-  doc.moveDown();
+  const primary = "#1f8aa3";
+  const primaryDark = "#155e75";
+  const accent = "#e8f6f8";
+  const border = "#d7e7ec";
+  const text = "#163042";
+  const muted = "#5f7785";
+  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
-  doc.fontSize(14).text("Compte rendu de consultation");
-  doc.fontSize(10).text(`Patient: ${item.patient_first_name} ${item.patient_last_name}`);
-  doc.text(`Date: ${new Date(item.start_time).toLocaleString("fr-FR")}`);
-  doc.text(`Statut: ${item.status}`);
-  if (item.motif_label) doc.text(`Motif: ${item.motif_label}`);
-  doc.moveDown();
+  doc.roundedRect(40, 34, pageWidth, 96, 18).fill(primary);
 
-  doc.fontSize(11).text("Notes");
-  doc.fontSize(10).text(item.notes ?? "-");
-  doc.moveDown();
+  const logoBuffer = cabinetLogoBuffer(item.cabinet_logo_url);
+  if (logoBuffer) {
+    doc.roundedRect(56, 50, 64, 64, 14).fill("#ffffff");
+    doc.image(logoBuffer, 60, 54, { fit: [56, 56] });
+  }
 
-  doc.fontSize(11).text("Actes");
+  const headerX = logoBuffer ? 136 : 56;
+  doc.fillColor("#ffffff").fontSize(22).text(item.cabinet_name, headerX, 54, { width: 280 });
+  doc.fontSize(10);
+  let headerLineY = 84;
+  const headerLines = [
+    item.cabinet_address,
+    item.cabinet_phone ? `Téléphone: ${item.cabinet_phone}` : null,
+    item.cabinet_email ? `E-mail: ${item.cabinet_email}` : null,
+    item.cabinet_ICE ? `ICE: ${item.cabinet_ICE}` : null,
+    item.cabinet_IF ? `IF: ${item.cabinet_IF}` : null,
+  ].filter(Boolean);
+  for (const line of headerLines) {
+    doc.text(line as string, headerX, headerLineY, { width: pageWidth - (headerX - 40) - 20 });
+    headerLineY += 13;
+  }
+
+  doc.fillColor(text);
+  doc.roundedRect(40, 148, pageWidth, 56, 16).fill(accent);
+  doc.fillColor(primaryDark).fontSize(18).text("Compte rendu de consultation", 56, 166);
+
+  const infoTop = 224;
+  const cardGap = 14;
+  const cardWidth = (pageWidth - cardGap) / 2;
+  doc.roundedRect(40, infoTop, cardWidth, 94, 14).fill("#ffffff").strokeColor(border).lineWidth(1).stroke();
+  doc.roundedRect(40 + cardWidth + cardGap, infoTop, cardWidth, 94, 14).fill("#ffffff").strokeColor(border).lineWidth(1).stroke();
+
+  doc.fillColor(primaryDark).fontSize(11).text("Patient", 56, infoTop + 16);
+  doc.fillColor(text).fontSize(16).text(`${item.patient_first_name} ${item.patient_last_name}`, 56, infoTop + 34);
+  doc.fillColor(muted).fontSize(10);
+  if (item.patient_birth_date) {
+    doc.text(`Né(e) le ${new Date(item.patient_birth_date).toLocaleDateString("fr-FR")}`, 56, infoTop + 58);
+  }
+
+  doc.fillColor(primaryDark).fontSize(11).text("Consultation", 56 + cardWidth + cardGap, infoTop + 16);
+  doc.fillColor(text).fontSize(10);
+  doc.text(`Date: ${new Date(item.start_time).toLocaleString("fr-FR")}`, 56 + cardWidth + cardGap, infoTop + 36);
+  doc.text(`Statut: ${item.status}`, 56 + cardWidth + cardGap, infoTop + 52);
+  doc.text(`Motif: ${item.motif_label ?? "-"}`, 56 + cardWidth + cardGap, infoTop + 68, { width: cardWidth - 32 });
+
+  const notesTop = 338;
+  doc.roundedRect(40, notesTop, pageWidth, 146, 14).fill("#ffffff").strokeColor(border).lineWidth(1).stroke();
+  doc.fillColor(primaryDark).fontSize(12).text("Compte rendu", 56, notesTop + 16);
+  doc.fillColor(text).fontSize(10).text(item.notes ?? "-", 56, notesTop + 40, {
+    width: pageWidth - 32,
+    lineGap: 3,
+  });
+
+  const actsTop = 504;
+  doc.fillColor(primaryDark).fontSize(12).text("Actes effectués", 56, actsTop);
+
+  const actsBoxTop = actsTop + 20;
+  const actsBoxHeight = Math.max(48, 22 + acts.rows.length * 24);
+  doc.roundedRect(40, actsBoxTop, pageWidth, actsBoxHeight, 14).fill("#ffffff").strokeColor(border).lineWidth(1).stroke();
+
   if (!acts.rowCount) {
-    doc.fontSize(10).text("Aucun acte");
+    doc.fillColor(muted).fontSize(10).text("Aucun acte renseigné.", 56, actsBoxTop + 18);
   } else {
-    for (const act of acts.rows) {
-      doc.fontSize(10).text(`${act.label} | Qté ${act.quantity} | PU ${act.unit_price} | Total ${act.total}`);
-    }
+    acts.rows.forEach((act, index) => {
+      doc.fillColor(text).fontSize(10).text(`• ${act.label}${act.quantity > 1 ? ` x${act.quantity}` : ""}`, 56, actsBoxTop + 18 + index * 24, {
+        width: pageWidth - 32,
+      });
+    });
   }
 
   doc.end();
   await new Promise<void>((resolve) => doc.on("end", () => resolve()));
   const pdfBuffer = Buffer.concat(buffers);
+  const patientPart = slugifyFilenamePart(`${item.patient_first_name}-${item.patient_last_name}`) || "patient";
+  const datePart = exportDatePart(item.start_time);
+  const fileName = `CR-${patientPart}-${datePart}.pdf`;
 
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="consultation-${item.id}.pdf"`);
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
   return res.send(pdfBuffer);
 });
 
@@ -517,11 +649,15 @@ consultationsRouter.get("/:id/word", async (req: AuthenticatedRequest, res) => {
       patient_birth_date: string | null;
       cabinet_name: string;
       cabinet_address: string | null;
+      cabinet_phone: string | null;
+      cabinet_email: string | null;
+      cabinet_ICE: string | null;
+      cabinet_IF: string | null;
       cabinet_logo_url: string | null;
     }
   >(
     `SELECT c.*, p.first_name AS patient_first_name, p.last_name AS patient_last_name, p.birth_date AS patient_birth_date,
-            cab.name AS cabinet_name, cab.address AS cabinet_address, cab.logo_url AS cabinet_logo_url
+            cab.name AS cabinet_name, cab.address AS cabinet_address, cab.phone AS cabinet_phone, cab.email AS cabinet_email, cab.siret AS cabinet_ICE, cab.adeli AS cabinet_IF, cab.logo_url AS cabinet_logo_url
      FROM consultations c
      JOIN patients p ON p.id = c.patient_id
      JOIN cabinets cab ON cab.id = c.cabinet_id
@@ -540,33 +676,124 @@ consultationsRouter.get("/:id/word", async (req: AuthenticatedRequest, res) => {
   );
 
   const actsHtml = acts.rows.length
-    ? `<ul>${acts.rows.map((act) => `<li>${act.label} - Qté ${act.quantity} - PU ${act.unit_price} - Total ${act.total}</li>`).join("")}</ul>`
-    : "<p>Aucun acte</p>";
+    ? acts.rows
+        .map(
+          (act) => `
+            <tr>
+              <td style="padding: 0 0 8px 0; font-size: 13px; color: #163042;">
+                ${act.label}${act.quantity > 1 ? ` x${act.quantity}` : ""}
+              </td>
+            </tr>`,
+        )
+        .join("")
+    : `
+      <tr>
+        <td style="font-size: 13px; color: #5f7785;">Aucun acte renseigné.</td>
+      </tr>`;
+
+  const logoMarkup = item.cabinet_logo_url
+    ? `<td style="width: 84px; vertical-align: top;">
+         <div style="width: 64px; height: 64px; padding: 4px; background: #ffffff; border: 1px solid #d7e7ec;">
+           <img src="${item.cabinet_logo_url}" alt="Logo du cabinet" style="width: 56px; height: 56px; object-fit: contain;" />
+         </div>
+       </td>`
+    : "";
 
   const html = `
     <html>
       <head>
         <meta charset="utf-8" />
         <title>CR Consultation</title>
+        <style>
+          body {
+            font-family: Arial, Helvetica, sans-serif;
+            color: #163042;
+            margin: 0;
+            padding: 24px;
+            background: #ffffff;
+          }
+          .notes {
+            white-space: pre-wrap;
+            font-size: 13px;
+            line-height: 1.55;
+          }
+        </style>
       </head>
       <body>
-        <h1>${item.cabinet_name}</h1>
-        <p>${item.cabinet_address ?? ""}</p>
-        ${item.cabinet_logo_url ? `<p>Logo: ${item.cabinet_logo_url}</p>` : ""}
-        <h2>Compte rendu de consultation</h2>
-        <p><b>Patient:</b> ${item.patient_first_name} ${item.patient_last_name}</p>
-        <p><b>Date:</b> ${new Date(item.start_time).toLocaleString("fr-FR")}</p>
-        <p><b>Statut:</b> ${item.status}</p>
-        <p><b>Motif:</b> ${item.motif_label ?? "-"}</p>
-        <h3>Notes</h3>
-        <p>${(item.notes ?? "-").replace(/\n/g, "<br/>")}</p>
-        <h3>Actes</h3>
-        ${actsHtml}
+        <table role="presentation" style="width: 100%; border-collapse: collapse; background: #1f8aa3; color: #ffffff;">
+          <tr>
+            <td style="padding: 20px 18px;">
+              <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  ${logoMarkup}
+                  <td style="vertical-align: top; padding-left: ${item.cabinet_logo_url ? "8px" : "0"};">
+                    <div style="font-size: 26px; font-weight: 700; margin: 0 0 10px 0;">${item.cabinet_name}</div>
+                    ${item.cabinet_address ? `<div style="font-size: 13px; margin-bottom: 4px;">${item.cabinet_address}</div>` : ""}
+                    ${item.cabinet_phone ? `<div style="font-size: 13px; margin-bottom: 4px;">Téléphone: ${item.cabinet_phone}</div>` : ""}
+                    ${item.cabinet_email ? `<div style="font-size: 13px; margin-bottom: 4px;">E-mail: ${item.cabinet_email}</div>` : ""}
+                    ${item.cabinet_ICE ? `<div style="font-size: 13px; margin-bottom: 4px;">ICE: ${item.cabinet_ICE}</div>` : ""}
+                    ${item.cabinet_IF ? `<div style="font-size: 13px;">IF: ${item.cabinet_IF}</div>` : ""}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+
+        <table role="presentation" style="width: 100%; border-collapse: collapse; margin-top: 16px;">
+          <tr>
+            <td style="background: #e8f6f8; color: #155e75; font-size: 20px; font-weight: 700; padding: 14px 16px;">
+              Compte rendu de consultation
+            </td>
+          </tr>
+        </table>
+
+        <table role="presentation" style="width: 100%; border-collapse: collapse; margin-top: 16px;">
+          <tr>
+            <td style="width: 50%; border: 1px solid #d7e7ec; padding: 16px; vertical-align: top;">
+              <div style="color: #155e75; font-size: 14px; font-weight: 700; margin-bottom: 10px;">Patient</div>
+              <div style="font-size: 20px; font-weight: 700; margin-bottom: 10px;">${item.patient_first_name} ${item.patient_last_name}</div>
+              ${item.patient_birth_date ? `<div style="font-size: 13px;">Né(e) le ${new Date(item.patient_birth_date).toLocaleDateString("fr-FR")}</div>` : ""}
+            </td>
+            <td style="width: 16px;"></td>
+            <td style="width: 50%; border: 1px solid #d7e7ec; padding: 16px; vertical-align: top;">
+              <div style="color: #155e75; font-size: 14px; font-weight: 700; margin-bottom: 10px;">Consultation</div>
+              <div style="font-size: 13px; margin-bottom: 6px;">Date: ${new Date(item.start_time).toLocaleString("fr-FR")}</div>
+              <div style="font-size: 13px; margin-bottom: 6px;">Statut: ${item.status}</div>
+              <div style="font-size: 13px;">Motif: ${item.motif_label ?? "-"}</div>
+            </td>
+          </tr>
+        </table>
+
+        <table role="presentation" style="width: 100%; border-collapse: collapse; margin-top: 18px; border: 1px solid #d7e7ec;">
+          <tr>
+            <td style="padding: 16px;">
+              <div style="color: #155e75; font-size: 16px; font-weight: 700; margin-bottom: 12px;">Compte rendu</div>
+              <div class="notes">${(item.notes ?? "-").replace(/\n/g, "<br/>")}</div>
+            </td>
+          </tr>
+        </table>
+
+        <table role="presentation" style="width: 100%; border-collapse: collapse; margin-top: 18px; border: 1px solid #d7e7ec;">
+          <tr>
+            <td style="padding: 16px;">
+              <div style="color: #155e75; font-size: 16px; font-weight: 700; margin-bottom: 12px;">Actes effectués</div>
+              <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                ${actsHtml}
+              </table>
+            </td>
+          </tr>
+        </table>
       </body>
     </html>
   `;
 
+  const patientPart = slugifyFilenamePart(`${item.patient_first_name}-${item.patient_last_name}`) || "patient";
+  const datePart = exportDatePart(item.start_time);
+  const fileName = `CR-${patientPart}-${datePart}.doc`;
+
   res.setHeader("Content-Type", "application/msword; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="consultation-${item.id}.doc"`);
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
   return res.send(html);
 });
+

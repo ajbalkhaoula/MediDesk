@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import PDFDocument from "pdfkit";
 import { z } from "zod";
 import { pool } from "../db/pool.js";
@@ -9,7 +9,7 @@ import { ensureUserCabinet } from "../lib/cabinet.js";
 const updateInvoiceSchema = z.object({
   invoice_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   notes: z.string().optional().nullable(),
-  status: z.enum(["draft", "sent", "paid"]).optional(),
+  status: z.enum(["draft", "paid"]).optional(),
 });
 
 const updateInvoiceLineSchema = z.object({
@@ -33,6 +33,10 @@ const createInvoiceSchema = z.union([
     notes: z.string().optional().nullable(),
   }),
 ]);
+
+const createInvoiceFromConsultationSchema = z.object({
+  consultation_id: z.string().uuid(),
+});
 
 interface UnbilledActRow {
   id: string;
@@ -81,6 +85,32 @@ interface InvoiceLineRow {
   created_at: string;
 }
 
+function cabinetLogoBuffer(logoUrl: string | null): Buffer | null {
+  if (!logoUrl || !logoUrl.startsWith("data:image/")) return null;
+  const parts = logoUrl.split(",", 2);
+  if (parts.length !== 2) return null;
+  try {
+    return Buffer.from(parts[1], "base64");
+  } catch {
+    return null;
+  }
+}
+
+function slugifyFilenamePart(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+}
+
+function exportDatePart(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "date-inconnue";
+  return date.toISOString().slice(0, 10);
+}
+
 function normalizeNullable(value?: string | null): string | null {
   if (value === undefined || value === null) return null;
   const trimmed = value.trim();
@@ -93,7 +123,7 @@ function toInvoice(row: InvoiceRow) {
     cabinetId: row.cabinet_id,
     patientId: row.patient_id,
     invoiceNumber: row.invoice_number,
-    status: row.status,
+    status: row.status === "sent" ? "draft" : row.status,
     invoiceDate: row.invoice_date,
     totalHt: Number(row.total_ht),
     totalTtc: Number(row.total_ttc),
@@ -198,6 +228,148 @@ billingRouter.get("/patients/:id/unbilled-acts", async (req: AuthenticatedReques
   });
 });
 
+billingRouter.get("/invoices/by-consultation/:consultationId", async (req: AuthenticatedRequest, res) => {
+  const cabinetId = await ensureUserCabinet(req.user!.id);
+  const invoice = await pool.query<InvoiceRow>(
+    `SELECT DISTINCT i.*, p.first_name AS patient_first_name, p.last_name AS patient_last_name
+     FROM invoices i
+     JOIN invoice_lines il ON il.invoice_id = i.id
+     JOIN patients p ON p.id = i.patient_id
+     WHERE i.cabinet_id = $1
+       AND il.consultation_id = $2
+     ORDER BY i.created_at DESC
+     LIMIT 1`,
+    [cabinetId, req.params.consultationId],
+  );
+
+  if (!invoice.rowCount) {
+    return res.status(404).json({ message: "Invoice not found for consultation" });
+  }
+
+  return res.json({ invoice: toInvoice(invoice.rows[0]) });
+});
+
+billingRouter.post("/invoices/from-consultation", async (req: AuthenticatedRequest, res) => {
+  const parsed = createInvoiceFromConsultationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid payload", errors: parsed.error.flatten() });
+  }
+
+  const cabinetId = await ensureUserCabinet(req.user!.id);
+  const consultationId = parsed.data.consultation_id;
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const existingInvoice = await client.query<InvoiceRow>(
+      `SELECT DISTINCT i.*, p.first_name AS patient_first_name, p.last_name AS patient_last_name
+       FROM invoices i
+       JOIN invoice_lines il ON il.invoice_id = i.id
+       JOIN patients p ON p.id = i.patient_id
+       WHERE i.cabinet_id = $1
+         AND il.consultation_id = $2
+       ORDER BY i.created_at DESC
+       LIMIT 1`,
+      [cabinetId, consultationId],
+    );
+
+    if (existingInvoice.rowCount) {
+      await client.query("COMMIT");
+      return res.json({ invoice: toInvoice(existingInvoice.rows[0]), created: false });
+    }
+
+    const consultation = await client.query<{ id: string; patient_id: string; status: string }>(
+      `SELECT id, patient_id, status
+       FROM consultations
+       WHERE id = $1
+         AND cabinet_id = $2
+       FOR UPDATE`,
+      [consultationId, cabinetId],
+    );
+
+    if (!consultation.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Consultation not found" });
+    }
+
+    if (consultation.rows[0].status !== "completed") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ message: "Only completed consultations can be invoiced." });
+    }
+
+    const actsRows = (
+      await client.query<UnbilledActRow>(
+        `SELECT ca.id, ca.consultation_id, ca.prestation_id, ca.label, ca.quantity, ca.unit_price, ca.total,
+                c.start_time, c.motif_label
+         FROM consultation_acts ca
+         JOIN consultations c ON c.id = ca.consultation_id
+         WHERE c.cabinet_id = $1
+           AND c.id = $2
+           AND ca.invoice_line_id IS NULL
+         ORDER BY ca.created_at ASC`,
+        [cabinetId, consultationId],
+      )
+    ).rows;
+
+    if (!actsRows.length) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "No billable acts found for this consultation." });
+    }
+
+    const invoiceNumber = await generateInvoiceNumber(client, cabinetId);
+    const createdInvoice = await client.query<InvoiceRow>(
+      `INSERT INTO invoices (cabinet_id, patient_id, invoice_number, status, invoice_date, created_by)
+       VALUES ($1, $2, $3, 'draft', CURRENT_DATE, $4)
+       RETURNING *`,
+      [cabinetId, consultation.rows[0].patient_id, invoiceNumber, req.user!.id],
+    );
+    const invoice = createdInvoice.rows[0];
+
+    for (let index = 0; index < actsRows.length; index += 1) {
+      const act = actsRows[index];
+      const lineInserted = await client.query<InvoiceLineRow>(
+        `INSERT INTO invoice_lines (
+           invoice_id, consultation_id, consultation_act_id, prestation_id, label,
+           quantity, unit_price, original_unit_price, total, line_order
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9)
+         RETURNING *`,
+        [
+          invoice.id,
+          consultationId,
+          act.id,
+          act.prestation_id,
+          act.label,
+          act.quantity,
+          Number(act.unit_price),
+          Number(act.total),
+          index,
+        ],
+      );
+      await client.query("UPDATE consultation_acts SET invoice_line_id = $1 WHERE id = $2", [lineInserted.rows[0].id, act.id]);
+    }
+
+    await recalculateInvoiceTotals(client, invoice.id);
+    const finalInvoice = await client.query<InvoiceRow>(
+      `SELECT i.*, p.first_name AS patient_first_name, p.last_name AS patient_last_name
+       FROM invoices i
+       JOIN patients p ON p.id = i.patient_id
+       WHERE i.id = $1`,
+      [invoice.id],
+    );
+
+    await client.query("COMMIT");
+    return res.status(201).json({ invoice: toInvoice(finalInvoice.rows[0]), created: true });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error(error);
+    return res.status(500).json({ message: "Unable to create invoice from consultation" });
+  } finally {
+    client.release();
+  }
+});
+
 billingRouter.post("/invoices", async (req: AuthenticatedRequest, res) => {
   const parsed = createInvoiceSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -260,8 +432,8 @@ billingRouter.post("/invoices", async (req: AuthenticatedRequest, res) => {
 
     const invoiceNumber = await generateInvoiceNumber(client, cabinetId);
     const createdInvoice = await client.query<InvoiceRow>(
-      `INSERT INTO invoices (cabinet_id, patient_id, invoice_number, status, notes, created_by)
-       VALUES ($1, $2, $3, 'draft', $4, $5)
+      `INSERT INTO invoices (cabinet_id, patient_id, invoice_number, status, invoice_date, notes, created_by)
+       VALUES ($1, $2, $3, 'draft', CURRENT_DATE, $4, $5)
        RETURNING *`,
       [cabinetId, data.patient_id, invoiceNumber, normalizeNullable(data.notes), req.user!.id],
     );
@@ -609,9 +781,9 @@ billingRouter.delete("/invoices/:id", async (req: AuthenticatedRequest, res) => 
 billingRouter.get("/invoices/:id/pdf", async (req: AuthenticatedRequest, res) => {
   const cabinetId = await ensureUserCabinet(req.user!.id);
 
-  const invoice = await pool.query<InvoiceRow & { patient_first_name: string; patient_last_name: string; cabinet_name: string; cabinet_address: string | null; cabinet_logo_url: string | null }>(
+  const invoice = await pool.query<InvoiceRow & { patient_first_name: string; patient_last_name: string; cabinet_name: string; cabinet_address: string | null; cabinet_phone: string | null; cabinet_email: string | null; cabinet_ICE: string | null; cabinet_IF: string | null; cabinet_logo_url: string | null }>(
     `SELECT i.*, p.first_name AS patient_first_name, p.last_name AS patient_last_name,
-            c.name AS cabinet_name, c.address AS cabinet_address, c.logo_url AS cabinet_logo_url
+            c.name AS cabinet_name, c.address AS cabinet_address, c.phone AS cabinet_phone, c.email AS cabinet_email, c.siret AS cabinet_ICE, c.adeli AS cabinet_IF, c.logo_url AS cabinet_logo_url
      FROM invoices i
      JOIN patients p ON p.id = i.patient_id
      JOIN cabinets c ON c.id = i.cabinet_id
@@ -628,49 +800,111 @@ billingRouter.get("/invoices/:id/pdf", async (req: AuthenticatedRequest, res) =>
   );
 
   const inv = invoice.rows[0];
-  const doc = new PDFDocument({ margin: 40 });
+  const doc = new PDFDocument({ margin: 40, size: "A4" });
   const buffers: Buffer[] = [];
   doc.on("data", (chunk) => buffers.push(chunk));
   doc.on("error", (err) => {
     throw err;
   });
 
-  doc.fontSize(18).text(inv.cabinet_name);
-  doc.fontSize(10).fillColor("#444").text(inv.cabinet_address ?? "");
-  if (inv.cabinet_logo_url) {
-    doc.text(`Logo: ${inv.cabinet_logo_url}`);
+  const primary = "#1f8aa3";
+  const primaryDark = "#155e75";
+  const accent = "#e8f6f8";
+  const border = "#d7e7ec";
+  const text = "#163042";
+  const muted = "#5f7785";
+  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
+  doc.roundedRect(40, 34, pageWidth, 96, 18).fill(primary);
+
+  const logoBuffer = cabinetLogoBuffer(inv.cabinet_logo_url);
+  if (logoBuffer) {
+    doc.roundedRect(56, 50, 64, 64, 14).fill("#ffffff");
+    doc.image(logoBuffer, 60, 54, { fit: [56, 56] });
   }
-  doc.moveDown();
 
-  doc.fillColor("#000").fontSize(14).text(`Facture ${inv.invoice_number}`);
-  doc.fontSize(10).text(`Date: ${inv.invoice_date}`);
-  doc.text(`Statut: ${inv.status}`);
-  doc.text(`Patient: ${inv.patient_first_name} ${inv.patient_last_name}`);
-  doc.moveDown();
+  const headerX = logoBuffer ? 136 : 56;
+  doc.fillColor("#ffffff").fontSize(22).text(inv.cabinet_name, headerX, 54, { width: 280 });
+  doc.fontSize(10);
+  let headerLineY = 84;
+  const headerLines = [
+    inv.cabinet_address,
+    inv.cabinet_phone ? `Téléphone: ${inv.cabinet_phone}` : null,
+    inv.cabinet_email ? `E-mail: ${inv.cabinet_email}` : null,
+    inv.cabinet_ICE ? `ICE: ${inv.cabinet_ICE}` : null,
+    inv.cabinet_IF ? `IF: ${inv.cabinet_IF}` : null,
+  ].filter(Boolean);
+  for (const line of headerLines) {
+    doc.text(line as string, headerX, headerLineY, { width: pageWidth - (headerX - 40) - 20 });
+    headerLineY += 13;
+  }
 
-  doc.fontSize(11).text("Lignes");
-  lines.rows.forEach((line) => {
-    doc
-      .fontSize(10)
-      .text(
-        `${line.label} | Qté ${line.quantity} | PU ${line.unit_price} | Total ${line.total}${
-          line.remark ? ` | Remarque: ${line.remark}` : ""
-        }`,
-      );
+  doc.fillColor(text);
+  doc.roundedRect(40, 148, pageWidth, 56, 16).fill(accent);
+  doc.fillColor(primaryDark).fontSize(18).text(`Facture ${inv.invoice_number}`, 56, 166);
+
+  const infoTop = 224;
+  const cardGap = 14;
+  const cardWidth = (pageWidth - cardGap) / 2;
+  doc.roundedRect(40, infoTop, cardWidth, 94, 14).fill("#ffffff").strokeColor(border).lineWidth(1).stroke();
+  doc.roundedRect(40 + cardWidth + cardGap, infoTop, cardWidth, 94, 14).fill("#ffffff").strokeColor(border).lineWidth(1).stroke();
+
+  doc.fillColor(primaryDark).fontSize(11).text("Patient", 56, infoTop + 16);
+  doc.fillColor(text).fontSize(16).text(`${inv.patient_first_name} ${inv.patient_last_name}`, 56, infoTop + 34);
+
+  doc.fillColor(primaryDark).fontSize(11).text("Facturation", 56 + cardWidth + cardGap, infoTop + 16);
+  doc.fillColor(text).fontSize(10);
+  doc.text(`Date: ${new Date(inv.invoice_date).toLocaleDateString("fr-FR")}`, 56 + cardWidth + cardGap, infoTop + 36);
+  doc.text(`Statut: ${inv.status}`, 56 + cardWidth + cardGap, infoTop + 52);
+  doc.text(`Référence: ${inv.invoice_number}`, 56 + cardWidth + cardGap, infoTop + 68);
+
+  const tableTop = 344;
+  const columns = { label: 56, qty: 315, unit: 382, total: 462 };
+  doc.fillColor(primaryDark).fontSize(12).text("Lignes de facture", 40, tableTop - 20);
+  doc.roundedRect(40, tableTop, pageWidth, 28, 10).fill(primaryDark);
+  doc.fillColor("#ffffff").fontSize(10);
+  doc.text("Libellé", columns.label, tableTop + 9);
+  doc.text("Qté", columns.qty, tableTop + 9);
+  doc.text("PU", columns.unit, tableTop + 9);
+  doc.text("Total", columns.total, tableTop + 9);
+
+  let rowY = tableTop + 28;
+  lines.rows.forEach((line, index) => {
+    const rowHeight = line.remark ? 42 : 32;
+    doc.roundedRect(40, rowY, pageWidth, rowHeight, 0).fill(index % 2 === 0 ? "#ffffff" : "#f7fbfc").strokeColor(border).lineWidth(1).stroke();
+    doc.fillColor(text).fontSize(10);
+    doc.text(line.label, columns.label, rowY + 10, { width: 230 });
+    doc.text(String(line.quantity), columns.qty, rowY + 10);
+    doc.text(String(line.unit_price), columns.unit, rowY + 10);
+    doc.text(String(line.total), columns.total, rowY + 10);
+    if (line.remark) {
+      doc.fillColor(muted).fontSize(9).text(`Remarque: ${line.remark}`, columns.label, rowY + 24, { width: pageWidth - 32 });
+    }
+    rowY += rowHeight;
   });
-  doc.moveDown();
-  doc.fontSize(11).text(`Total HT: ${inv.total_ht}`);
-  doc.fontSize(11).text(`Total TTC: ${inv.total_ttc}`);
+
+  doc.roundedRect(326, rowY + 14, 210, 70, 12).fill(accent);
+  doc.fillColor(primaryDark).fontSize(11).text("Total HT", 342, rowY + 28);
+  doc.fillColor(text).fontSize(14).text(`${Number(inv.total_ht).toFixed(2)} MAD`, 420, rowY + 24, { width: 100, align: "right" });
+  doc.fillColor(primaryDark).fontSize(11).text("Total TTC", 342, rowY + 54);
+  doc.fillColor(text).fontSize(16).text(`${Number(inv.total_ttc).toFixed(2)} MAD`, 410, rowY + 48, { width: 110, align: "right" });
+
   if (inv.notes) {
-    doc.moveDown();
-    doc.fontSize(10).text(`Notes: ${inv.notes}`);
+    const notesTop = rowY + 104;
+    doc.roundedRect(40, notesTop, pageWidth, 84, 14).fill("#ffffff").strokeColor(border).lineWidth(1).stroke();
+    doc.fillColor(primaryDark).fontSize(12).text("Notes", 56, notesTop + 16);
+    doc.fillColor(text).fontSize(10).text(inv.notes, 56, notesTop + 38, { width: pageWidth - 32, lineGap: 3 });
   }
 
   doc.end();
   await new Promise<void>((resolve) => doc.on("end", () => resolve()));
   const pdfBuffer = Buffer.concat(buffers);
+  const patientPart = slugifyFilenamePart(`${inv.patient_first_name}-${inv.patient_last_name}`) || "patient";
+  const datePart = exportDatePart(inv.invoice_date);
+  const fileName = `FAC-${patientPart}-${datePart}.pdf`;
 
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${inv.invoice_number}.pdf"`);
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
   return res.send(pdfBuffer);
 });
+

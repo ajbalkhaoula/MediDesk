@@ -4,6 +4,7 @@ import { ArrowDownAZ, ArrowUpAZ, Plus, Search } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 import { getPrestationSettings } from "@/lib/scheduling";
+import ListPagination from "@/components/ui/list-pagination";
 
 interface PatientItem {
   id: string;
@@ -16,7 +17,7 @@ interface InvoiceItem {
   patientId: string;
   patientName?: string;
   invoiceNumber: string;
-  status: "draft" | "sent" | "paid";
+  status: "draft" | "paid";
   invoiceDate: string;
   totalTtc: number;
 }
@@ -30,7 +31,6 @@ interface InvoicesResponse {
 
 function statusLabel(status: InvoiceItem["status"]): string {
   if (status === "draft") return "Brouillon";
-  if (status === "sent") return "Envoyée";
   return "Payée";
 }
 
@@ -49,11 +49,11 @@ const InvoicesPage = () => {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [prestationId, setPrestationId] = useState("");
-  const [minAmount, setMinAmount] = useState("");
-  const [maxAmount, setMaxAmount] = useState("");
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"patient" | "date">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const activeFilterClass = "border-primary/40 bg-primary/10 text-primary";
+  const inactiveFilterClass = "border-input bg-background text-foreground";
 
   const [showCreate, setShowCreate] = useState(false);
   const [createPatientId, setCreatePatientId] = useState("");
@@ -85,8 +85,6 @@ const InvoicesPage = () => {
       if (dateFrom) params.set("date_from", dateFrom);
       if (dateTo) params.set("date_to", dateTo);
       if (prestationId) params.set("prestation_id", prestationId);
-      if (minAmount) params.set("min_amount", minAmount);
-      if (maxAmount) params.set("max_amount", maxAmount);
       params.set("page", String(page));
       params.set("page_size", String(pageSize));
       const data = await apiRequest<InvoicesResponse>(`/api/invoices?${params.toString()}`, { auth: true });
@@ -121,7 +119,7 @@ const InvoicesPage = () => {
 
   useEffect(() => {
     void loadInvoices();
-  }, [patientId, status, dateFrom, dateTo, prestationId, minAmount, maxAmount, page]);
+  }, [patientId, status, dateFrom, dateTo, prestationId, page]);
 
   useEffect(() => {
     if (showCreate && createMode === "acts" && createPatientId) {
@@ -200,19 +198,6 @@ const InvoicesPage = () => {
     }
   };
 
-  const deleteInvoice = async (invoice: InvoiceItem) => {
-    if (invoice.status !== "draft") return;
-    if (!window.confirm(`Supprimer ${invoice.invoiceNumber} ?`)) return;
-    try {
-      await apiRequest(`/api/invoices/${invoice.id}`, { method: "DELETE", auth: true });
-      toast({ title: "Facture supprimée" });
-      void loadInvoices();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Suppression impossible";
-      toast({ title: "Erreur", description: message, variant: "destructive" });
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -278,29 +263,32 @@ const InvoicesPage = () => {
       )}
 
       <div className="rounded-xl border border-border bg-card p-4 space-y-3" style={{ boxShadow: "var(--shadow-card)" }}>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-7">
-          <select value={patientId} onChange={(e) => { setPage(1); setPatientId(e.target.value); }} className="h-10 rounded-lg border border-input bg-background px-3 text-sm">
-            <option value="">Tous les patients</option>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+          <select value={patientId} onChange={(e) => { setPage(1); setPatientId(e.target.value); }} className={`h-10 rounded-lg border px-3 text-sm ${patientId ? activeFilterClass : inactiveFilterClass}`}>
+            <option value="">Patient</option>
             {patients.map((patient) => (
               <option key={patient.id} value={patient.id}>{patient.firstName} {patient.lastName}</option>
             ))}
           </select>
-          <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="h-10 rounded-lg border border-input bg-background px-3 text-sm">
-            <option value="">Tous statuts</option>
+          <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className={`h-10 rounded-lg border px-3 text-sm ${status ? activeFilterClass : inactiveFilterClass}`}>
+            <option value="">Statut</option>
             <option value="draft">Brouillon</option>
-            <option value="sent">Envoyée</option>
             <option value="paid">Payée</option>
           </select>
-          <input type="date" value={dateFrom} onChange={(e) => { setPage(1); setDateFrom(e.target.value); }} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
-          <input type="date" value={dateTo} onChange={(e) => { setPage(1); setDateTo(e.target.value); }} className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
-          <select value={prestationId} onChange={(e) => { setPage(1); setPrestationId(e.target.value); }} className="h-10 rounded-lg border border-input bg-background px-3 text-sm">
-            <option value="">Tous actes</option>
+          <label className={`relative flex h-10 items-center rounded-lg border px-3 text-sm ${dateFrom ? activeFilterClass : inactiveFilterClass}`}>
+            {!dateFrom && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 truncate text-sm text-muted-foreground">Date début</span>}
+            <input type="date" value={dateFrom} onChange={(e) => { setPage(1); setDateFrom(e.target.value); }} className={`w-full bg-transparent text-sm outline-none ${dateFrom ? "" : "text-transparent caret-transparent"}`} aria-label="Date début" />
+          </label>
+          <label className={`relative flex h-10 items-center rounded-lg border px-3 text-sm ${dateTo ? activeFilterClass : inactiveFilterClass}`}>
+            {!dateTo && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 truncate text-sm text-muted-foreground">Date fin</span>}
+            <input type="date" value={dateTo} onChange={(e) => { setPage(1); setDateTo(e.target.value); }} className={`w-full bg-transparent text-sm outline-none ${dateTo ? "" : "text-transparent caret-transparent"}`} aria-label="Date fin" />
+          </label>
+          <select value={prestationId} onChange={(e) => { setPage(1); setPrestationId(e.target.value); }} className={`h-10 rounded-lg border px-3 text-sm ${prestationId ? activeFilterClass : inactiveFilterClass}`}>
+            <option value="">Type d'acte</option>
             {prestations.map((item) => (
               <option key={item.id} value={item.id}>{item.name}</option>
             ))}
           </select>
-          <input type="number" min={0} value={minAmount} onChange={(e) => { setPage(1); setMinAmount(e.target.value); }} placeholder="Min" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
-          <input type="number" min={0} value={maxAmount} onChange={(e) => { setPage(1); setMaxAmount(e.target.value); }} placeholder="Max" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
         </div>
 
         <div className="relative">
@@ -330,26 +318,26 @@ const InvoicesPage = () => {
                 </th>
                 <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total TTC</th>
                 <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Statut</th>
-                <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={6} className="px-4 py-4 text-sm text-muted-foreground">Chargement...</td></tr>}
-              {!loading && !sortedInvoices.length && <tr><td colSpan={6} className="px-4 py-4 text-sm text-muted-foreground">Aucune facture.</td></tr>}
+              {loading && <tr><td colSpan={5} className="px-4 py-4 text-sm text-muted-foreground">Chargement...</td></tr>}
+              {!loading && !sortedInvoices.length && <tr><td colSpan={5} className="px-4 py-4 text-sm text-muted-foreground">Aucune facture.</td></tr>}
               {!loading && sortedInvoices.map((invoice) => (
                 <tr key={invoice.id} className="border-b border-border/50">
-                  <td className="px-4 py-3 text-sm text-foreground">{invoice.invoiceNumber}</td>
+                  <td className="px-4 py-3 text-sm text-foreground">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/invoices/${invoice.id}`)}
+                      className="font-medium text-left text-foreground underline-offset-4 hover:underline"
+                    >
+                      {invoice.invoiceNumber}
+                    </button>
+                  </td>
                   <td className="px-4 py-3 text-sm text-foreground">{invoice.patientName ?? "-"}</td>
                   <td className="px-4 py-3 text-sm text-foreground">{invoice.invoiceDate}</td>
                   <td className="px-4 py-3 text-sm text-foreground">{invoice.totalTtc.toFixed(2)} MAD</td>
                   <td className="px-4 py-3 text-sm text-foreground">{statusLabel(invoice.status)}</td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="inline-flex items-center gap-2">
-                      <button type="button" onClick={() => navigate(`/invoices/${invoice.id}`)} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted">Voir</button>
-                      <button type="button" onClick={() => navigate(`/invoices/${invoice.id}`)} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted">Modifier</button>
-                      <button type="button" disabled={invoice.status !== "draft"} onClick={() => void deleteInvoice(invoice)} className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50">Supprimer</button>
-                    </div>
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -357,11 +345,12 @@ const InvoicesPage = () => {
         </div>
       </div>
 
-      <div className="flex items-center justify-end gap-2">
-        <button type="button" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={page <= 1} className="h-9 rounded-lg border border-input px-3 text-sm disabled:opacity-50">Précédent</button>
-        <span className="text-sm text-muted-foreground">Page {page} / {maxPage}</span>
-        <button type="button" onClick={() => setPage((prev) => Math.min(maxPage, prev + 1))} disabled={page >= maxPage} className="h-9 rounded-lg border border-input px-3 text-sm disabled:opacity-50">Suivant</button>
-      </div>
+      <ListPagination
+        page={page}
+        maxPage={maxPage}
+        onPrevious={() => setPage((prev) => Math.max(1, prev - 1))}
+        onNext={() => setPage((prev) => Math.min(maxPage, prev + 1))}
+      />
     </div>
   );
 };

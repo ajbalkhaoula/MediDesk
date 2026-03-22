@@ -50,4 +50,22 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return payload as T;
 }
 
+export function getDownloadFilename(response: Response): string | null {
+  const disposition = response.headers.get("Content-Disposition");
+  if (!disposition) return null;
+
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const plainMatch = disposition.match(/filename="([^"]+)"/i) ?? disposition.match(/filename=([^;]+)/i);
+  if (!plainMatch?.[1]) return null;
+  return plainMatch[1].trim();
+}
+
 export { API_BASE_URL };

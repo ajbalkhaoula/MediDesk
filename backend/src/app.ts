@@ -1,4 +1,4 @@
-﻿import "express-async-errors";
+import "express-async-errors";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -9,11 +9,19 @@ import { healthRouter } from "./routes/health.js";
 import { patientsRouter } from "./routes/patients.js";
 import { appointmentsRouter } from "./routes/appointments.js";
 import { consultationsRouter } from "./routes/consultations.js";
+import { billingRouter } from "./routes/billing.js";
+import { cabinetRouter } from "./routes/cabinet.js";
 
 export const app = express();
 
 app.use(helmet());
-app.use(cors({ origin: config.frontendOrigin, credentials: true }));
+app.use(
+  cors({
+    origin: config.frontendOrigin,
+    credentials: true,
+    exposedHeaders: ["Content-Disposition"],
+  }),
+);
 app.use(express.json());
 app.use(morgan("dev"));
 
@@ -22,6 +30,8 @@ app.use("/api/auth", authRouter);
 app.use("/api/patients", patientsRouter);
 app.use("/api/appointments", appointmentsRouter);
 app.use("/api/consultations", consultationsRouter);
+app.use("/api", billingRouter);
+app.use("/api", cabinetRouter);
 
 app.use((err: Error & { statusCode?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (typeof err.statusCode === "number" && err.statusCode >= 400 && err.statusCode < 500) {

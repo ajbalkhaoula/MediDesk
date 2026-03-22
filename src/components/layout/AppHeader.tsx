@@ -1,10 +1,12 @@
-import { Bell, Menu, Search } from "lucide-react";
+﻿import { Bell, Menu, Search } from "lucide-react";
 import { useLocation } from "react-router-dom";
 
 const pageTitles: Record<string, string> = {
   "/": "Tableau de bord",
   "/patients": "Patients",
   "/calendar": "Rendez-vous",
+  "/consultations": "Consultations",
+  "/invoices": "Factures",
   "/assessments": "Bilans",
   "/reports": "Rapports",
   "/settings": "Paramètres",
@@ -16,7 +18,7 @@ interface AppHeaderProps {
 
 const AppHeader = ({ onMenuClick }: AppHeaderProps) => {
   const location = useLocation();
-  const title = pageTitles[location.pathname] || "Cabortho";
+  const title = pageTitles[location.pathname] || "MediDesk";
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/80 backdrop-blur-md px-3 sm:px-4 lg:px-6">

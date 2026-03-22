@@ -13,6 +13,9 @@ import Reports from "./pages/Reports";
 import SettingsPage from "./pages/SettingsPage";
 import Consultations from "./pages/Consultations";
 import ConsultationPage from "./pages/Consultation";
+import InvoicesPage from "./pages/Invoices";
+import InvoiceDetailPage from "./pages/InvoiceDetail";
+import InvoiceCreateFromConsultation from "./pages/InvoiceCreateFromConsultation";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -33,6 +36,9 @@ const App = () => (
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/consultations" element={<Consultations />} />
               <Route path="/consultations/:consultationId" element={<ConsultationPage />} />
+              <Route path="/invoices" element={<InvoicesPage />} />
+              <Route path="/invoices/:invoiceId" element={<InvoiceDetailPage />} />
+              <Route path="/invoices/from-consultation" element={<InvoiceCreateFromConsultation />} />
               <Route path="/assessments" element={<Assessments />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/settings" element={<SettingsPage />} />

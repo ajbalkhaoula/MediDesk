@@ -1,7 +1,8 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowDownAZ, ArrowUpAZ, CalendarDays, ChevronLeft, ChevronRight, List, Pencil, Plus, Search, UserX, XCircle } from "lucide-react";
 import NewAppointmentDialog, { type AppointmentFormInput } from "@/components/dialogs/NewAppointmentDialog";
+import ListPagination from "@/components/ui/list-pagination";
 import { apiRequest } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 import { getAppointmentReasonSettings, type AppointmentReasonSetting } from "@/lib/scheduling";
@@ -65,7 +66,7 @@ function combineLocalDateTimeToIso(date: string, time: string): string {
 }
 
 function formatWeekLabel(start: Date): string {
-  const end = addDays(start, 4);
+  const end = addDays(start, 5);
   const from = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "long", year: "numeric" }).format(start);
   const to = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "long", year: "numeric" }).format(end);
   return `${from} - ${to}`;
@@ -84,10 +85,10 @@ function getStatusBadgeClass(status: Appointment["status"]): string {
 }
 
 function getStatusLabel(status: Appointment["status"]): string {
-  if (status === "completed") return "Effectué";
-  if (status === "canceled") return "Annulé";
+  if (status === "completed") return "Effectu\u00e9";
+  if (status === "canceled") return "Annul\u00e9";
   if (status === "no_show") return "Absent";
-  return "Planifié";
+  return "Planifi\u00e9";
 }
 
 const Calendar = () => {
@@ -105,11 +106,12 @@ const Calendar = () => {
   const [listSearch, setListSearch] = useState("");
   const [sortBy, setSortBy] = useState<"date" | "patient">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [listPage, setListPage] = useState(1);
   const loadRequestIdRef = useRef(0);
 
   const days = useMemo(
     () =>
-      Array.from({ length: 5 }, (_, i) => {
+      Array.from({ length: 6 }, (_, i) => {
         const date = addDays(weekStart, i);
         const label = new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "2-digit" }).format(date);
         return { date, label };
@@ -122,7 +124,7 @@ const Calendar = () => {
     setLoading(true);
     try {
       const from = weekStart.toISOString();
-      const to = addDays(weekStart, 5).toISOString();
+      const to = addDays(weekStart, 6).toISOString();
       const [patientsData, apptsData] = await Promise.all([
         apiRequest<CalendarPatientsResponse>("/api/patients?status=all", { auth: true }),
         apiRequest<AppointmentsResponse>(`/api/appointments?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&status=all`, { auth: true }),
@@ -145,7 +147,7 @@ const Calendar = () => {
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (!event.key || event.key === "cabortho.settings.reasons") {
+      if (!event.key || event.key === "medidesk.settings.reasons" || event.key === "cabortho.settings.reasons") {
         setReasonOptions(getAppointmentReasonSettings());
       }
     };
@@ -239,7 +241,7 @@ const Calendar = () => {
           notes: appt.notes,
         }),
       });
-      toast({ title: `Statut RDV: ${status === "canceled" ? "annulé" : "absent"}` });
+      toast({ title: `Statut RDV: ${status === "canceled" ? "annul\u00e9" : "absent"}` });
       await loadData();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Changement de statut impossible";
@@ -306,6 +308,23 @@ const Calendar = () => {
     setSortDir("asc");
   };
 
+  const listPageSize = 10;
+  const listMaxPage = Math.max(1, Math.ceil(listAppointments.length / listPageSize));
+  const paginatedAppointments = useMemo(() => {
+    const start = (listPage - 1) * listPageSize;
+    return listAppointments.slice(start, start + listPageSize);
+  }, [listAppointments, listPage]);
+
+  useEffect(() => {
+    setListPage(1);
+  }, [weekStart, listSearch, sortBy, sortDir, viewMode]);
+
+  useEffect(() => {
+    if (listPage > listMaxPage) {
+      setListPage(listMaxPage);
+    }
+  }, [listPage, listMaxPage]);
+
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="space-y-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -326,7 +345,7 @@ const Calendar = () => {
 
       {viewMode === "calendar" && (
         <div className="rounded-xl border border-border bg-card overflow-hidden" style={{ boxShadow: "var(--shadow-card)" }}>
-          <div className="grid grid-cols-[60px_repeat(5,minmax(140px,1fr))] border-b border-border bg-muted/40">
+          <div className="grid grid-cols-[60px_repeat(6,minmax(140px,1fr))] border-b border-border bg-muted/40">
             <div className="p-3" />
             {days.map((day) => (
               <div key={day.date.toISOString()} className="border-l border-border p-3 text-center">
@@ -337,7 +356,7 @@ const Calendar = () => {
           </div>
           <div className="relative overflow-x-auto">
             {hours.map((hour) => (
-              <div key={hour} className="grid grid-cols-[60px_repeat(5,minmax(140px,1fr))]" style={{ height: 72 }}>
+              <div key={hour} className="grid grid-cols-[60px_repeat(6,minmax(140px,1fr))]" style={{ height: 76 }}>
                 <div className="flex items-start justify-end pr-3 pt-1 text-xs text-muted-foreground">{hour}:00</div>
                 {days.map((day) => (
                   <button key={`${day.date.toISOString()}-${hour}`} type="button" onClick={() => openCreateDialog({ date: toDateInput(day.date), startTime: `${String(hour).padStart(2, "0")}:00`, status: "scheduled", tag: reasonOptions[0]?.name ?? "" })} className="border-l border-t border-border/60 hover:bg-muted/30" title="Créer un rendez-vous sur ce créneau" />
@@ -349,20 +368,28 @@ const Calendar = () => {
               const start = new Date(appt.startsAt);
               const end = new Date(appt.endsAt);
               const dayIndex = getDayIndexInWeek(appt.startsAt, weekStart);
-              if (dayIndex < 0 || dayIndex > 4) return null;
+              if (dayIndex < 0 || dayIndex > 5) return null;
               const startHour = start.getHours() + start.getMinutes() / 60;
               const endHour = end.getHours() + end.getMinutes() / 60;
-              const top = (startHour - 8) * 72;
+              const top = (startHour - 8) * 76;
               const duration = Math.max(endHour - startHour, 0.25);
-              const height = duration * 72 - 4;
-              const left = `calc(60px + ${dayIndex} * ((100% - 60px) / 5) + 4px)`;
-              const width = "calc((100% - 60px) / 5 - 8px)";
+              const height = Math.max(duration * 76 - 10, 24);
+              const left = `calc(60px + ${dayIndex} * ((100% - 60px) / 6) + 6px)`;
+              const width = "calc((100% - 60px) / 6 - 12px)";
+              const isCompact = height < 56;
+              const isTiny = height < 42;
 
               return (
-                <button key={appt.id} onClick={() => openEditDialog(appt)} className={`absolute rounded-lg border px-2.5 py-1.5 text-left transition-all hover:scale-[1.01] hover:shadow-md ${getStatusBadgeClass(appt.status)}`} style={{ top: top + 2, height, left, width }} title={`${appt.patientName} - ${getStatusLabel(appt.status)}`}>
-                  <p className="text-xs font-semibold truncate">{appt.patientName}</p>
-                  <p className="text-[10px] opacity-80 truncate">{appt.tag || getStatusLabel(appt.status)}</p>
-                  <p className="text-[10px] opacity-70 truncate">{toTimeInput(start)} - {toTimeInput(end)}</p>
+                <button
+                  key={appt.id}
+                  onClick={() => openEditDialog(appt)}
+                  className={`absolute overflow-hidden rounded-lg border text-left transition-all hover:scale-[1.01] hover:shadow-md ${getStatusBadgeClass(appt.status)} ${isCompact ? "px-2 py-1" : "px-2.5 py-2"}`}
+                  style={{ top: top + 4, height, left, width }}
+                  title={`${appt.patientName} - ${getStatusLabel(appt.status)}`}
+                >
+                  <p className={`${isCompact ? "text-[11px]" : "text-xs"} font-semibold truncate leading-tight`}>{appt.patientName}</p>
+                  {!isTiny && <p className="truncate text-[10px] leading-tight opacity-80">{appt.tag || getStatusLabel(appt.status)}</p>}
+                  {!isCompact && <p className="truncate text-[10px] leading-tight opacity-70">{toTimeInput(start)} - {toTimeInput(end)}</p>}
                 </button>
               );
             })}
@@ -401,7 +428,7 @@ const Calendar = () => {
                 </tr>
               </thead>
               <tbody>
-                {listAppointments.map((appt) => {
+                {paginatedAppointments.map((appt) => {
                   const start = new Date(appt.startsAt);
                   const end = new Date(appt.endsAt);
                   return (
@@ -429,6 +456,16 @@ const Calendar = () => {
               </tbody>
             </table>
           </div>
+          {!loading && listAppointments.length > 0 && (
+            <div className="border-t border-border px-4 py-4">
+              <ListPagination
+                page={listPage}
+                maxPage={listMaxPage}
+                onPrevious={() => setListPage((prev) => Math.max(1, prev - 1))}
+                onNext={() => setListPage((prev) => Math.min(listMaxPage, prev + 1))}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -457,4 +494,6 @@ const Calendar = () => {
 };
 
 export default Calendar;
+
+
 

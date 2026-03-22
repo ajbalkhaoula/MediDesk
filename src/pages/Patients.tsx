@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Search, Plus, Filter, Trash2, Phone, Pencil, Eye, Archive, ArchiveRestore } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import NewPatientDialog, { type NewPatientInput } from "@/components/dialogs/NewPatientDialog";
+import ListPagination from "@/components/ui/list-pagination";
 import { apiRequest } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 
@@ -95,8 +97,11 @@ function isSamePatientPayload(a: NewPatientInput, b: NewPatientInput): boolean {
 }
 
 const Patients = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [search, setSearch] = useState("");
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showPatientDialog, setShowPatientDialog] = useState(false);
@@ -143,6 +148,13 @@ const Patients = () => {
     setDialogMode("create");
     setShowPatientDialog(true);
   };
+
+  useEffect(() => {
+    if ((location.state as { openCreate?: boolean } | null)?.openCreate) {
+      openCreateDialog();
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
 
   const openViewDialog = (patient: Patient) => {
     setEditingPatient(patient);
@@ -265,9 +277,25 @@ const Patients = () => {
   };
 
   const rows = useMemo(() => patients, [patients]);
+  const pageSize = 12;
+  const maxPage = Math.max(1, Math.ceil(rows.length / pageSize));
+  const paginatedRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [page, rows]);
   const isReadOnly = dialogMode === "view";
   const dialogTitle = dialogMode === "create" ? "Nouveau patient" : dialogMode === "view" ? "Fiche patient" : "Modifier le patient";
   const submitLabel = dialogMode === "create" ? "Créer le patient" : "Enregistrer";
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter]);
+
+  useEffect(() => {
+    if (page > maxPage) {
+      setPage(maxPage);
+    }
+  }, [page, maxPage]);
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="space-y-5">
@@ -306,7 +334,7 @@ const Patients = () => {
       </div>
 
       <div className="md:hidden space-y-3">
-        {!loading && rows.map((patient) => (
+        {!loading && paginatedRows.map((patient) => (
           <div
             key={patient.id}
             onClick={() => openViewDialog(patient)}
@@ -436,7 +464,7 @@ const Patients = () => {
               </tr>
             </thead>
             <tbody>
-              {!loading && rows.map((patient) => (
+              {!loading && paginatedRows.map((patient) => (
                 <tr
                   key={patient.id}
                   onClick={() => openViewDialog(patient)}
@@ -553,6 +581,15 @@ const Patients = () => {
           </div>
         )}
       </div>
+
+      {!loading && !error && rows.length > 0 && (
+        <ListPagination
+          page={page}
+          maxPage={maxPage}
+          onPrevious={() => setPage((prev) => Math.max(1, prev - 1))}
+          onNext={() => setPage((prev) => Math.min(maxPage, prev + 1))}
+        />
+      )}
 
       <NewPatientDialog
         open={showPatientDialog}

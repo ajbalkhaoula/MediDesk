@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowUpRight, CalendarDays, Clock, ClipboardList, TrendingUp, UserPlus, Users } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { apiRequest } from "@/lib/api";
 
 interface Patient {
@@ -21,6 +22,7 @@ interface Appointment {
 }
 
 const Dashboard = () => {
+  const navigate = useNavigate();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
 
@@ -126,14 +128,14 @@ const Dashboard = () => {
             {upcomingToday.map((appt) => (
               <div key={appt.id} className="flex items-center gap-4 rounded-lg border border-border/50 p-3 hover:bg-muted/50">
                 <div className="flex h-10 w-14 flex-col items-center justify-center rounded-lg bg-muted">
-                  <Clock className="h-3 w-3 text-muted-foreground mb-0.5" />
+                  <Clock className="mb-0.5 h-3 w-3 text-muted-foreground" />
                   <span className="text-xs font-semibold text-foreground">{new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(appt.startsAt))}</span>
                 </div>
-                <div className="flex-1 min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-foreground">{appt.patientName}</p>
                   <p className="text-xs text-muted-foreground">{appt.tag || "-"}</p>
                 </div>
-                <span className="rounded-full px-2.5 py-1 text-xs font-medium bg-info/15 text-info">{appt.status}</span>
+                <span className="rounded-full bg-info/15 px-2.5 py-1 text-xs font-medium text-info">{appt.status}</span>
               </div>
             ))}
             {!upcomingToday.length && <p className="text-sm text-muted-foreground">Aucun rendez-vous aujourd'hui.</p>}
@@ -143,7 +145,15 @@ const Dashboard = () => {
         <div className="lg:col-span-2 rounded-xl border border-border bg-card p-5" style={{ boxShadow: "var(--shadow-card)" }}>
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-base font-semibold text-foreground">Patients récents</h3>
-            <UserPlus className="h-4 w-4 text-muted-foreground" />
+            <button
+              type="button"
+              onClick={() => navigate("/patients", { state: { openCreate: true } })}
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+              title="Nouveau patient"
+              aria-label="Nouveau patient"
+            >
+              <UserPlus className="h-4 w-4" />
+            </button>
           </div>
           <div className="space-y-3">
             {recentPatients.map((patient) => (
@@ -151,11 +161,11 @@ const Dashboard = () => {
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
                   {(patient.firstName[0] ?? "") + (patient.lastName[0] ?? "")}
                 </div>
-                <div className="flex-1 min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-foreground">{patient.firstName} {patient.lastName}</p>
                   <p className="text-xs text-muted-foreground">{new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(patient.createdAt))}</p>
                 </div>
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/15 text-success">Actif</span>
+                <span className="rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium text-success">Actif</span>
               </div>
             ))}
             {!recentPatients.length && <p className="text-sm text-muted-foreground">Aucun patient.</p>}

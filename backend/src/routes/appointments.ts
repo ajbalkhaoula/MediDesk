@@ -56,8 +56,8 @@ type DbClient = {
 
 async function refreshPatientSessionMetrics(client: DbClient, cabinetId: string, patientId: string) {
   const metrics = await client.query(
-    `SELECT COUNT(*)::int AS sessions_count, MAX(starts_at::date) AS last_session_date
-     FROM appointments
+    `SELECT COUNT(*)::int AS sessions_count, MAX(start_time::date) AS last_session_date
+     FROM consultations
      WHERE cabinet_id = $1 AND patient_id = $2 AND status = 'completed'`,
     [cabinetId, patientId],
   );

@@ -1,4 +1,4 @@
-﻿# Cabortho Hub
+# MediDesk
 
 Frontend: React + Vite + TypeScript + Tailwind + shadcn/ui  
 Backend: Node.js (Express + TypeScript)  
@@ -56,3 +56,4 @@ Set environment variables from:
 - Development seed user is in `backend/migrations/002_seed_dev_user.sql`.
 - Auth tokens are JWTs stored in browser local storage.
 - Protected routes are enforced on the frontend (`src/components/auth/ProtectedRoute.tsx`).
+

@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, Bell, Building2, ClipboardList, Pencil, Plus, Search, Shield, Trash2, User } from "lucide-react";
 import {
@@ -10,12 +10,39 @@ import {
   type AppointmentReasonSetting,
   type PrestationSetting,
 } from "@/lib/scheduling";
+import { apiRequest } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 
 type PanelId = "cabinet" | "profil" | "notifications" | "securite" | "prestations" | "motifs";
 
+interface CabinetSettings {
+  id?: string;
+  name: string;
+  address: string;
+  phone: string;
+  email: string;
+  siret: string;
+  adeli: string;
+  logoUrl: string;
+  timezone: string;
+}
+
+interface CabinetResponse {
+  cabinet: {
+    id: string;
+    name: string;
+    address: string | null;
+    phone: string | null;
+    email: string | null;
+    siret: string | null;
+    adeli: string | null;
+    logoUrl: string | null;
+    timezone: string;
+  };
+}
+
 const cards: Array<{ id: PanelId; title: string; desc: string; icon: typeof Building2 }> = [
-  { id: "cabinet", title: "Cabinet", desc: "Nom, adresse, fuseau horaire, logo", icon: Building2 },
+  { id: "cabinet", title: "Cabinet", desc: "Nom, adresse, téléphone, logo", icon: Building2 },
   { id: "profil", title: "Profil", desc: "Informations personnelles, mot de passe", icon: User },
   { id: "notifications", title: "Notifications", desc: "Préférences de notification", icon: Bell },
   { id: "securite", title: "Sécurité", desc: "Sessions actives, authentification", icon: Shield },
@@ -23,11 +50,26 @@ const cards: Array<{ id: PanelId; title: string; desc: string; icon: typeof Buil
   { id: "motifs", title: "Motifs de RDV", desc: "Motifs et durées par type de rendez-vous", icon: ClipboardList },
 ];
 
+const emptyCabinet: CabinetSettings = {
+  name: "",
+  address: "",
+  phone: "",
+  email: "",
+  siret: "",
+  adeli: "",
+  logoUrl: "",
+  timezone: "Africa/Casablanca",
+};
+
 const SettingsPage = () => {
   const [activePanel, setActivePanel] = useState<PanelId | null>(null);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
 
   const [prestations, setPrestations] = useState<PrestationSetting[]>(() => getPrestationSettings());
   const [reasons, setReasons] = useState<AppointmentReasonSetting[]>(() => getAppointmentReasonSettings());
+  const [cabinet, setCabinet] = useState<CabinetSettings>(emptyCabinet);
+  const [cabinetLoading, setCabinetLoading] = useState(true);
+  const [cabinetSaving, setCabinetSaving] = useState(false);
 
   const [prestationName, setPrestationName] = useState("");
   const [prestationDuration, setPrestationDuration] = useState("45");
@@ -40,6 +82,37 @@ const SettingsPage = () => {
 
   const [prestationSearch, setPrestationSearch] = useState("");
   const [reasonSearch, setReasonSearch] = useState("");
+  const [prestationSortBy] = useState<"name" | "duration" | "price">("name");
+  const [prestationSortDir] = useState<"asc" | "desc">("asc");
+  const [reasonSortBy] = useState<"name" | "duration">("name");
+  const [reasonSortDir] = useState<"asc" | "desc">("asc");
+
+  useEffect(() => {
+    const loadCabinet = async () => {
+      setCabinetLoading(true);
+      try {
+        const response = await apiRequest<CabinetResponse>("/api/cabinet", { auth: true });
+        setCabinet({
+          id: response.cabinet.id,
+          name: response.cabinet.name,
+          address: response.cabinet.address ?? "",
+          phone: response.cabinet.phone ?? "",
+          email: response.cabinet.email ?? "",
+          siret: response.cabinet.siret ?? "",
+          adeli: response.cabinet.adeli ?? "",
+          logoUrl: response.cabinet.logoUrl ?? "",
+          timezone: response.cabinet.timezone,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Chargement du cabinet impossible";
+        toast({ title: "Erreur", description: message, variant: "destructive" });
+      } finally {
+        setCabinetLoading(false);
+      }
+    };
+
+    void loadCabinet();
+  }, []);
 
   const hasPrestations = useMemo(() => prestations.length > 0, [prestations]);
   const hasReasons = useMemo(() => reasons.length > 0, [reasons]);
@@ -71,7 +144,6 @@ const SettingsPage = () => {
     return reasonSortDir === "asc" ? sorted : sorted.reverse();
   }, [reasons, reasonSearch, reasonSortBy, reasonSortDir]);
 
-
   const savePrestations = (next: PrestationSetting[]) => {
     setPrestations(next);
     setPrestationSettings(next);
@@ -80,6 +152,65 @@ const SettingsPage = () => {
   const saveReasons = (next: AppointmentReasonSetting[]) => {
     setReasons(next);
     setAppointmentReasonSettings(next);
+  };
+
+  const updateCabinet = (field: keyof CabinetSettings, value: string) => {
+    setCabinet((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const onLogoSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      setCabinet((prev) => ({ ...prev, logoUrl: result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const saveCabinet = async () => {
+    if (!cabinet.name.trim()) {
+      toast({ title: "Nom requis", description: "Le nom du cabinet est obligatoire.", variant: "destructive" });
+      return;
+    }
+
+    setCabinetSaving(true);
+    try {
+      const response = await apiRequest<CabinetResponse>("/api/cabinet", {
+        method: "PUT",
+        auth: true,
+        body: JSON.stringify({
+          name: cabinet.name,
+          address: cabinet.address || null,
+          phone: cabinet.phone || null,
+          email: cabinet.email || null,
+          siret: cabinet.siret || null,
+          adeli: cabinet.adeli || null,
+          logoUrl: cabinet.logoUrl || null,
+          timezone: cabinet.timezone,
+        }),
+      });
+
+      setCabinet({
+        id: response.cabinet.id,
+        name: response.cabinet.name,
+        address: response.cabinet.address ?? "",
+        phone: response.cabinet.phone ?? "",
+        email: response.cabinet.email ?? "",
+        siret: response.cabinet.siret ?? "",
+        adeli: response.cabinet.adeli ?? "",
+        logoUrl: response.cabinet.logoUrl ?? "",
+        timezone: response.cabinet.timezone,
+      });
+      toast({ title: "Cabinet mis à jour" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Enregistrement du cabinet impossible";
+      toast({ title: "Erreur", description: message, variant: "destructive" });
+    } finally {
+      setCabinetSaving(false);
+    }
   };
 
   const resetPrestationForm = () => {
@@ -146,15 +277,15 @@ const SettingsPage = () => {
               key={card.id}
               type="button"
               onClick={() => setActivePanel(card.id)}
-              className="flex items-center gap-4 rounded-2xl border border-border bg-card p-7 text-left transition-all hover:shadow-md"
+              className="flex items-center gap-4 rounded-2xl border border-border bg-card p-5 text-left transition-all hover:shadow-md"
               style={{ boxShadow: "var(--shadow-card)" }}
             >
-              <div className="rounded-2xl bg-muted p-4">
-                <card.icon className="h-7 w-7 text-foreground" />
+              <div className="rounded-2xl bg-muted p-3">
+                <card.icon className="h-6 w-6 text-foreground" />
               </div>
               <div>
-                <p className="text-3 leading-7 text-xl font-semibold text-foreground">{card.title}</p>
-                <p className="text-sm text-muted-foreground">{card.desc}</p>
+                <p className="text-lg font-semibold leading-6 text-foreground">{card.title}</p>
+                <p className="text-sm leading-5 text-muted-foreground">{card.desc}</p>
               </div>
             </button>
           ))}
@@ -172,17 +303,89 @@ const SettingsPage = () => {
         Retour aux rubriques
       </button>
 
-      {(activePanel === "cabinet" || activePanel === "profil" || activePanel === "notifications" || activePanel === "securite") && (
+      {activePanel === "cabinet" && (
+        <div className="rounded-xl border border-border bg-card p-5 space-y-4" style={{ boxShadow: "var(--shadow-card)" }}>
+          <div>
+            <h3 className="text-base font-semibold text-foreground">Identité du cabinet</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Ces informations seront reprises dans les comptes rendus, factures et autres documents.</p>
+          </div>
+
+          {cabinetLoading ? (
+            <p className="text-sm text-muted-foreground">Chargement du cabinet...</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <input value={cabinet.name} onChange={(e) => updateCabinet("name", e.target.value)} placeholder="Nom du cabinet" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+                <input value={cabinet.phone} onChange={(e) => updateCabinet("phone", e.target.value)} placeholder="Téléphone" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+                <input value={cabinet.email} onChange={(e) => updateCabinet("email", e.target.value)} placeholder="E-mail" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+                <input value={cabinet.timezone} onChange={(e) => updateCabinet("timezone", e.target.value)} placeholder="Fuseau horaire" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+                <input value={cabinet.siret} onChange={(e) => updateCabinet("siret", e.target.value)} placeholder="ICE" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+                <input value={cabinet.adeli} onChange={(e) => updateCabinet("adeli", e.target.value)} placeholder="IF" className="h-10 rounded-lg border border-input bg-background px-3 text-sm" />
+                <textarea value={cabinet.address} onChange={(e) => updateCabinet("address", e.target.value)} placeholder="Adresse du cabinet" rows={3} className="rounded-lg border border-input bg-background px-3 py-2 text-sm md:col-span-2" />
+              </div>
+
+              <div className="rounded-xl border border-border bg-muted/20 p-4">
+                <p className="mb-3 text-sm font-medium text-foreground">Logo du cabinet</p>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-xl border border-border bg-card">
+                    {cabinet.logoUrl ? (
+                      <img src={cabinet.logoUrl} alt="Logo du cabinet" className="h-full w-full object-contain" />
+                    ) : (
+                      <Building2 className="h-8 w-8 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      ref={logoInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/*"
+                      onChange={onLogoSelected}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => logoInputRef.current?.click()}
+                      className="inline-flex h-10 items-center gap-2 rounded-lg border border-input bg-background px-4 text-sm font-medium text-foreground hover:bg-muted"
+                    >
+                      Choisir une photo
+                    </button>
+                    {cabinet.logoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCabinet((prev) => ({ ...prev, logoUrl: "" }));
+                          if (logoInputRef.current) logoInputRef.current.value = "";
+                        }}
+                        className="inline-flex h-10 items-center gap-2 rounded-lg border border-input bg-background px-4 text-sm font-medium text-foreground hover:bg-muted"
+                      >
+                        Supprimer le logo
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => void saveCabinet()} disabled={cabinetSaving} className="inline-flex h-10 items-center gap-2 rounded-lg gradient-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60">
+                  <Building2 className="h-4 w-4" />
+                  Enregistrer le cabinet
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {(activePanel === "profil" || activePanel === "notifications" || activePanel === "securite") && (
         <div className="rounded-xl border border-border bg-card p-5" style={{ boxShadow: "var(--shadow-card)" }}>
           <h3 className="text-base font-semibold text-foreground">{activeMeta.title}</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Cette section est prête pour le paramétrage détaillé.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Cette section sera branchée ensuite.</p>
         </div>
       )}
 
       {activePanel === "prestations" && (
         <div className="rounded-xl border border-border bg-card p-5 space-y-4" style={{ boxShadow: "var(--shadow-card)" }}>
           <h3 className="text-base font-semibold text-foreground">Prestations</h3>
-          <p className="text-xs text-muted-foreground">CRUD complet: nom de l'acte, durée par défaut, prix.</p>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
             <input value={prestationName} onChange={(e) => setPrestationName(e.target.value)} placeholder="Nom de l'acte" className="h-10 rounded-lg border border-input bg-background px-3 text-sm md:col-span-2 focus:outline-none focus:ring-2 focus:ring-ring/30" />
@@ -212,7 +415,7 @@ const SettingsPage = () => {
               <thead>
                 <tr className="bg-muted/40 border-b border-border">
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Acte</th>
-                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Dur?e</th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Durée</th>
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Prix</th>
                   <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
                 </tr>
@@ -247,7 +450,6 @@ const SettingsPage = () => {
       {activePanel === "motifs" && (
         <div className="rounded-xl border border-border bg-card p-5 space-y-4" style={{ boxShadow: "var(--shadow-card)" }}>
           <h3 className="text-base font-semibold text-foreground">Motifs de RDV</h3>
-          <p className="text-xs text-muted-foreground">CRUD complet: nom et durée.</p>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
             <input value={reasonName} onChange={(e) => setReasonName(e.target.value)} placeholder="Nom du motif" className="h-10 rounded-lg border border-input bg-background px-3 text-sm md:col-span-3 focus:outline-none focus:ring-2 focus:ring-ring/30" />
@@ -276,7 +478,7 @@ const SettingsPage = () => {
               <thead>
                 <tr className="bg-muted/40 border-b border-border">
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Motif</th>
-                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Dur?e</th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Durée</th>
                   <th className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
                 </tr>
               </thead>
@@ -310,4 +512,3 @@ const SettingsPage = () => {
 };
 
 export default SettingsPage;
-
